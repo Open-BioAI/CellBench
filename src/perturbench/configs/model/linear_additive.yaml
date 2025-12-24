@@ -1,0 +1,11 @@
+_target_: perturbench.modelcore.models.LinearAdditive
+lr: 0.0047168133094877523
+wd:  1.7588044643755207e-08
+inject_covariates: False
+use_cell_emb: False
+use_mask: true  # Unified mask switch for training loss and evaluation
+
+# Learning rate scheduler configuration
+lr_scheduler_mode: onecycle  # OneCycleLR for better convergence
+lr_scheduler_max_lr: 0.001   # Max learning rate for OneCycleLR
+# lr_scheduler_total_steps: auto-calculated from dataloader size * max_epochs

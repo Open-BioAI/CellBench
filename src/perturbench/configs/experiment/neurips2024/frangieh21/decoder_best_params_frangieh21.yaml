@@ -1,0 +1,21 @@
+# @package _global_
+
+defaults:
+- override /model: decoder_only
+- override /callbacks: default
+- override /data: frangieh21
+
+trainer:
+  max_epochs: 400
+  min_epochs: 5
+
+model:
+  encoder_width: 3328
+  lr: 0.001489196297126292
+  n_genes: null
+  n_layers: 1
+  n_perts: null
+  softplus_output: true
+  use_covariates: true
+  use_perturbations: true
+  wd: 4.786646240929937e-06

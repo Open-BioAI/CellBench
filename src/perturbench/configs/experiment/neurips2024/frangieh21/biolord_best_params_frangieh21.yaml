@@ -1,0 +1,30 @@
+# @package _global_
+
+defaults:
+- override /model: biolord
+- override /callbacks: default
+- override /data: frangieh21
+
+trainer:
+  max_epochs: 400
+  min_epochs: 5
+  precision: 32
+
+model:
+  _target_: anubis.models.BiolordStar
+  dropout: 0.30000000000000004
+  encoder_width: 5376
+  latent_dim: 512
+  lr: 2.643716468011295e-05
+  n_genes: null
+  n_layers: 1
+  n_perts: null
+  penalty_weight: 49.426728002719415
+  softplus_output: true
+  wd: 3.8596437745886474e-08
+
+data:
+  add_controls: false
+  batch_size: 1000
+  evaluation:
+    chunk_size: 10

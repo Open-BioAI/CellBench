@@ -1,0 +1,17 @@
+# @package _global_
+
+defaults:
+- override /model: linear_additive
+- override /callbacks: default
+- override /data: frangieh21
+
+trainer:
+  max_epochs: 400
+  min_epochs: 5
+
+model:
+  inject_covariates: true
+  lr: 0.003915672085065509
+  n_genes: null
+  n_perts: null
+  wd: 1.4293895399278078e-08

@@ -1,0 +1,33 @@
+# @package _global_
+
+defaults:
+- override /model: sams_vae
+- override /callbacks: default
+- override /data: jiang24
+
+trainer:
+  max_epochs: 400
+  min_epochs: 5
+  precision: 32
+
+model:
+  dropout: 0.5
+  generative_counterfactual: true
+  hidden_dim_cond: 329
+  hidden_dim_x: 3328
+  inject_covariates_decoder: true
+  inject_covariates_encoder: true
+  latent_dim: 64
+  lr: 7.594588526179077e-06
+  mask_prior_probability: 0.20684484580190832
+  n_layers_decoder: 3
+  n_layers_encoder_e: 5
+  n_layers_encoder_x: 3
+  softplus_output: true
+  wd: 1.5915315253373636e-08
+
+data:
+  add_controls: false
+  batch_size: 256
+  evaluation:
+    chunk_size: 10

@@ -1,0 +1,40 @@
+_target_: perturbench.modelcore.models.squidiff.Squidiff
+z_latent_dim: 60
+cond_hidden: 2048
+cond_dropout: 0.1
+use_covariates: False
+
+# Optimizer settings
+lr: 1e-4
+wd: 1e-8
+
+# LR scheduler settings (ReduceLROnPlateau)
+lr_scheduler_factor: 0.7        # LR decay factor
+lr_scheduler_patience: 25       # Wait N epochs before reducing LR
+lr_scheduler_freq: 1            # Check the monitor every N epochs
+lr_scheduler_interval: "epoch"  # Run scheduler once per epoch
+lr_scheduler_mode: onecycle     # Options: "onecycle", "step", or null/plateau (default with cooldown=20, threshold=1e-3)
+lr_scheduler_max_lr: 0.001      # Max learning rate for OneCycleLR
+# lr_scheduler_total_steps: auto-calculated from dataloader size * max_epochs
+
+diffusion_steps: 1000
+noise_schedule: linear
+timestep_respacing: ""
+learn_sigma: False
+predict_xstart: False
+rescale_timesteps: False
+rescale_learned_sigmas: False
+dropout: 0.1
+use_checkpoint: False
+use_scale_shift_norm: True
+use_fp16: False
+use_encoder: True
+use_drug_structure: False
+drug_dimension: 1024
+comb_num: 2
+schedule_sampler: uniform
+cov_keys: ${data.cov_keys}
+pert_key: ${oc.select:data.pert_key,null}
+use_pretrained_cell_emb: False
+use_cell_emb: ${.use_pretrained_cell_emb}
+use_mask: true

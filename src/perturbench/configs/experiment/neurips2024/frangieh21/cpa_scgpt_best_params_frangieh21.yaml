@@ -1,0 +1,35 @@
+# @package _global_
+
+defaults:
+- override /model: cpa
+- override /callbacks: default
+- override /data: frangieh21
+
+trainer:
+  max_epochs: 400
+  min_epochs: 5
+
+model:
+  adv_classifier_hidden_dim: 249
+  adv_classifier_n_layers: 5
+  adv_steps: 2
+  adv_weight: 0.4809114972414237
+  dropout: 0.1
+  elementwise_affine: false
+  hidden_dim: 4352
+  kl_weight: 0.1519255328598612
+  lr: 0.0006148770073381143
+  n_latent: 128
+  n_layers_covar_emb: 1
+  n_layers_encoder: 1
+  n_layers_pert_emb: 1
+  n_warmup_epochs: 10
+  penalty_weight: 0.19363459943522998
+  softplus_output: false
+  variational: true
+  wd: 7.097486120374588e-08
+
+data:
+  add_controls: false
+  datapath: ${paths.data_dir}/prime-data/frangieh21_processed_scgpt.h5ad
+  embedding_key: scgpt_embeddings

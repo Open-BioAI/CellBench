@@ -1,0 +1,35 @@
+# @package _global_
+
+defaults:
+- override /model: sams_vae
+- override /callbacks: default
+- override /data: frangieh21
+
+trainer:
+  max_epochs: 400
+  min_epochs: 5
+  precision: 32
+
+model:
+  disable_e_dist: true
+  disable_sparsity: true
+  dropout: 0.0
+  generative_counterfactual: true
+  hidden_dim_cond: 329
+  hidden_dim_x: 2560
+  inject_covariates_decoder: true
+  inject_covariates_encoder: true
+  latent_dim: 128
+  lr: 5.579821197158771e-06
+  mask_prior_probability: 0.09647872920959553
+  n_layers_decoder: 1
+  n_layers_encoder_e: 4
+  n_layers_encoder_x: 4
+  softplus_output: true
+  wd: 2.0857105211314087e-08
+
+data:
+  add_controls: false
+  batch_size: 256
+  evaluation:
+    chunk_size: 10

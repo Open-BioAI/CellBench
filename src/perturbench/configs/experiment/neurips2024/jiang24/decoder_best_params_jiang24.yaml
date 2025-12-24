@@ -1,0 +1,21 @@
+# @package _global_
+
+defaults:
+- override /model: decoder_only
+- override /callbacks: default
+- override /data: jiang24
+
+trainer:
+  max_epochs: 400
+  min_epochs: 5
+
+model:
+  encoder_width: 5376
+  lr: 9.426394813968772e-05
+  n_genes: null
+  n_layers: 3
+  n_perts: null
+  softplus_output: true
+  use_covariates: true
+  use_perturbations: true
+  wd: 8.513975008706282e-08

@@ -1,0 +1,18 @@
+# Checkpoint callbacks for loss and PCC
+model_checkpoint_loss:
+  _target_: lightning.pytorch.callbacks.ModelCheckpoint
+  monitor: val_loss_epoch    # 监控 epoch 级别的 val_loss（更稳定）
+  mode: min                  # 越小越好
+  dirpath: ${paths.output_dir}/checkpoints/loss
+  filename: "epoch={epoch}-step={step}-valloss={val_loss_epoch:.4f}"
+  save_top_k: 1
+  save_last: true
+
+model_checkpoint_pcc:
+  _target_: lightning.pytorch.callbacks.ModelCheckpoint
+  monitor: val_PCC_epoch     # 监控 epoch 级别的 val_PCC（更稳定）
+  mode: max                  # 越大越好
+  dirpath: ${paths.output_dir}/checkpoints/pcc
+  filename: "epoch={epoch}-step={step}-valpcc={val_PCC_epoch:.4f}"
+  save_top_k: 1
+  save_last: true

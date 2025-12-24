@@ -1,0 +1,27 @@
+# @package _global_
+
+defaults:
+- override /model: latent_additive
+- override /callbacks: default
+- override /data: frangieh21
+
+trainer:
+  max_epochs: 400
+  min_epochs: 5
+
+model:
+  dropout: 0.30000000000000004
+  encoder_width: 3328
+  inject_covariates_decoder: true
+  inject_covariates_encoder: true
+  latent_dim: 192
+  lr: 0.0004036126472173799
+  n_genes: null
+  n_layers: 1
+  n_perts: null
+  softplus_output: true
+  wd: 2.0909467656368513e-08
+
+data:
+  datapath: ${paths.data_dir}/prime-data/frangieh21_processed_scgpt.h5ad
+  embedding_key: scgpt_embeddings

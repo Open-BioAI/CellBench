@@ -1,0 +1,26 @@
+# @package _global_
+
+defaults:
+  - override /model: squidiff
+  - override /data: squidiff
+
+
+# all parameters below will be merged with parameters from default configurations set above
+# this allows you to overwrite only specified parameters
+
+seed: 245
+
+trainer:
+  min_epochs: 50
+  max_epochs: 1000
+  gradient_clip_val: 1
+  devices: [2,3]
+  precision: 32
+
+
+
+data:
+  splitter:
+    max_heldout_fraction_per_covariate: 0.7
+
+

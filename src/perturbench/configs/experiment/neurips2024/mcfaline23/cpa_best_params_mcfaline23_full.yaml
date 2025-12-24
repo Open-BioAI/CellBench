@@ -1,0 +1,46 @@
+# @package _global_
+
+# to execute this experiment run:
+# python train.py experiment=example
+
+defaults:
+  - override /model: cpa
+  - override /data: mcfaline23
+
+# all parameters below will be merged with parameters from default configurations set above
+# this allows you to overwrite only specified parameters
+
+seed: 245
+
+trainer:
+  min_epochs: 5
+  max_epochs: 500
+
+data:
+  evaluation:
+    chunk_size: 5
+  batch_size: 8000
+  num_workers: 12
+  splitter:
+    split_path: ${paths.data_dir}/mcfaline23_gxe_splits/full_covariate_split.csv
+
+model:
+  adv_classifier_hidden_dim: 281
+  adv_classifier_n_layers: 1
+  adv_steps: 3
+  adv_weight: 3.3267124584103804
+  dropout: 0.30000000000000004
+  elementwise_affine: false
+  hidden_dim: 4352
+  kl_weight: 0.4194843985243823
+  lr: 1.7339648673958316e-05
+  n_latent: 64
+  n_layers_covar_emb: 1
+  n_layers_encoder: 1
+  n_layers_pert_emb: 2
+  n_warmup_epochs: 10
+  penalty_weight: 0.6115268823779908
+  softplus_output: false
+  variational: true
+  wd: 2.346560291976718e-06
+

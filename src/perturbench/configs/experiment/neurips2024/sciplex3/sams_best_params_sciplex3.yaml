@@ -1,0 +1,41 @@
+# @package _global_
+
+# to execute this experiment run:
+# python train.py experiment=example
+
+defaults:
+  - override /model: sams_vae
+  - override /data: sciplex3
+
+# all parameters below will be merged with parameters from default configurations set above
+# this allows you to overwrite only specified parameters
+
+seed: 137
+
+trainer:
+  min_epochs: 5
+  max_epochs: 500
+  precision: 32
+
+data:
+  batch_size: 256
+  add_controls: False
+  evaluation:
+    chunk_size: 10
+
+model:
+  dropout: 0.30000000000000004
+  hidden_dim_cond: 2816
+  hidden_dim_x: 1536
+  inject_covariates_decoder: false
+  inject_covariates_encoder: false
+  latent_dim: 64
+  lr: 0.00040019008240191795
+  mask_prior_probability: 0.011486688007756388
+  n_genes: null
+  n_layers_decoder: 1
+  n_layers_encoder_e: 2
+  n_layers_encoder_x: 4
+  n_perts: null
+  softplus_output: true
+  wd: 1.749495655302928e-06

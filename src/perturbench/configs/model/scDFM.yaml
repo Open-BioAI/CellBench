@@ -1,0 +1,24 @@
+_target_: perturbench.modelcore.models.scDFM.models.origin.model.model
+sample_steps: 100
+batch_size: 96
+lr: 5e-5
+eta_min: 1e-6
+wd: 1e-5
+lr_scheduler_freq: 1
+lr_scheduler_interval: step
+lr_scheduler_patience: null
+lr_scheduler_factor: null
+lr_monitor_key: null
+mmd_loss_lambda: 0.5
+gene_set_size: 512
+ntoken: 6000
+d_model: 512
+nhead: 8
+nlayers: 4
+dropout: 0.1
+fusion_method: differential_perceiver # concat, add, cross
+perturbation_function: crisper
+use_perturbation_interaction: True
+coexpression_adj_path: ${data.co_expression_graph_config.dir}/co-expression_graph.pt
+topk: 30
+threshold: 0.4

@@ -1,0 +1,29 @@
+defaults:
+  - early_stopping
+  - lr_monitor
+  - model_summary
+  - rich_progress_bar
+  - _self_
+
+model_summary:
+  max_depth: -1
+
+# Checkpoint callbacks for loss and PCC
+# These are defined here to ensure they are loaded by Hydra
+model_checkpoint_loss:
+  _target_: lightning.pytorch.callbacks.ModelCheckpoint
+  monitor: val_loss_epoch
+  mode: min
+  dirpath: ${paths.output_dir}/checkpoints/loss
+  filename: "epoch={epoch}-step={step}-valloss={val_loss_epoch:.4f}"
+  save_top_k: 1
+  save_last: false  # Disable to save disk space
+
+model_checkpoint_pcc:
+  _target_: lightning.pytorch.callbacks.ModelCheckpoint
+  monitor: val_PCC_epoch
+  mode: max
+  dirpath: ${paths.output_dir}/checkpoints/pcc
+  filename: "epoch={epoch}-step={step}-valpcc={val_PCC_epoch:.4f}"
+  save_top_k: 1
+  save_last: false  # Disable to save disk space, only save best checkpoint

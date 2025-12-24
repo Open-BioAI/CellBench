@@ -1,0 +1,25 @@
+wandb:
+  _target_: lightning.pytorch.loggers.WandbLogger
+  project: perturbench
+  save_dir: ${paths.output_dir}
+  name: gears
+  tags: ["hydra", "lightning", "perturbench"]
+
+  # 关键配置：彻底关闭环境扫描
+  log_model: false
+  # 实时同步设置
+  offline: false  # 确保在线模式，实时同步
+  settings:
+    _disable_stats: true
+    disable_git: true
+    disable_code: true
+    disable_job_creation: true
+    # ⬇⬇⬇关键一行 ⬇⬇⬇
+    disable_python_packages: true
+    # 实时同步配置
+    save_code: false
+    sync_tensorboard: true
+    # 设置同步间隔，确保实时上传
+    _sync_period: 10
+
+

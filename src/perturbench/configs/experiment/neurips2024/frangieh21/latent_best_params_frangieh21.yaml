@@ -1,0 +1,23 @@
+# @package _global_
+
+defaults:
+- override /model: latent_additive
+- override /callbacks: default
+- override /data: frangieh21
+
+trainer:
+  max_epochs: 400
+  min_epochs: 5
+
+model:
+  dropout: 0.30000000000000004
+  encoder_width: 2304
+  inject_covariates_decoder: true
+  inject_covariates_encoder: true
+  latent_dim: 256
+  lr: 0.00052308363076951
+  n_genes: null
+  n_layers: 1
+  n_perts: null
+  softplus_output: true
+  wd: 1.564792695502722e-07
