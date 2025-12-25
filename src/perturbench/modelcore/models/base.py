@@ -31,7 +31,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import lightning as L
 import torch
-import torch.nn.functional as F
 from abc import ABC
 import pandas as pd
 import numpy as np
