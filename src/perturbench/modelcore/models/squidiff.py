@@ -100,7 +100,7 @@ class Squidiff(PerturbationModel):
         schedule_sampler: str = "uniform",
         use_pretrained_cell_emb:bool= False,
         use_cell_emb: bool | None = None,
-        use_mask: bool = True,  # 控制是否使用mask计算loss，默认启用
+        use_mask: bool = False,  # 控制是否使用mask计算loss，默认不启用
         datamodule: Optional[L.LightningDataModule] = None,
     ):
         super().__init__(datamodule=datamodule, lr=lr, wd=wd,
@@ -209,13 +209,10 @@ class Squidiff(PerturbationModel):
         t, weights = self.schedule_sampler.sample(B, x0.device)
         cond = self._build_conditions(batch)
 
-        # Get mask if available (controlled by use_mask)
-        mask = None
-        if self.use_mask and hasattr(batch, 'pert_expression_mask'):
-            mask = batch.pert_expression_mask.to(x0.device)
-            if mask.is_sparse:
-                mask = mask.to_dense()
-            mask = mask.float()
+        # Get mask using unified method from base class
+        mask = self._get_mask(batch)
+        if mask is not None:
+            mask = mask.to(x0.device)
 
         losses = self.diffusion.training_losses(self.model, x0, t, model_kwargs=cond, mask=mask)
         return (losses["loss"] * weights).mean()
@@ -231,7 +228,7 @@ class Squidiff(PerturbationModel):
             with torch.no_grad():
                 predictions = self.predict(batch)
                 observed = batch.pert_cell_counts.squeeze()
-                mask = self._get_mask_for_pcc(batch)
+                mask = self._get_mask(batch)
                 if mask is not None:
                     mask = mask.to(predictions.device)
                 train_pcc = self._compute_masked_pcc(predictions, observed, mask)
@@ -248,7 +245,7 @@ class Squidiff(PerturbationModel):
         with torch.no_grad():
             predictions = self.predict(batch)
             observed = batch.pert_cell_counts.squeeze()
-            mask = self._get_mask_for_pcc(batch)
+            mask = self._get_mask(batch)
             if mask is not None:
                 mask = mask.to(predictions.device)
             val_pcc = self._compute_masked_pcc(predictions, observed, mask)

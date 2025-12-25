@@ -397,10 +397,8 @@ class scLAMBDA(PerturbationModel):
 
         x, p, _ = self.unpack_batch(batch)
 
-        # Get expression mask if available
-        mask = None
-        if self.use_mask and hasattr(batch, "pert_expression_mask"):
-            mask = batch.pert_expression_mask.to(x.device).float()
+        # Get expression mask if available - use unified method from base class
+        mask = self._get_mask(batch)
 
         # Adversarial training on perturbation embeddings
         p_for_adv = p
@@ -496,10 +494,8 @@ class scLAMBDA(PerturbationModel):
         batch,_=data_tuple
         x, p, _ = self.unpack_batch(batch)
 
-        # Get expression mask if available
-        mask = None
-        if self.use_mask and hasattr(batch, "pert_expression_mask"):
-            mask = batch.pert_expression_mask.to(x.device).float()
+        # Get expression mask if available - use unified method from base class
+        mask = self._get_mask(batch)
 
         # Forward pass
         outputs = self.forward(x, p)

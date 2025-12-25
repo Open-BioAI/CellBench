@@ -31,6 +31,7 @@ class BiolordStar(PerturbationModel):
         dropout: float | None = None,
         softplus_output: bool = True,
         n_total_covariates: int | None = None,
+        use_mask: bool = False,  # Unified mask switch for training loss and evaluation
         datamodule: L.LightningDataModule | None = None,
             **kwargs,
     ):
@@ -72,6 +73,7 @@ class BiolordStar(PerturbationModel):
             lr_scheduler_mode=lr_scheduler_mode,
             lr_scheduler_max_lr=lr_scheduler_max_lr,
             lr_scheduler_total_steps=lr_scheduler_total_steps,
+            use_mask=use_mask,  # Pass use_mask to base class
         )
         self.save_hyperparameters(ignore=["datamodule"])
 
@@ -195,9 +197,10 @@ class BiolordStar(PerturbationModel):
         predicted_perturbed_expression, penalty = self.forward(
             control_expression, batch, add_noise=True
         )
-        # 使用表达 mask 计算 loss，仅在表达基因上计算（对 batch 和基因做 masked average）
-        if self.use_mask and hasattr(batch, "pert_expression_mask"):
-            mask = batch.pert_expression_mask.to(predicted_perturbed_expression.device).float()
+        # Use expression mask for loss calculation - only compute loss on expressed genes
+        mask = self._get_mask(batch)
+        if mask is not None:
+            mask = mask.to(predicted_perturbed_expression.device)
             masked_loss = F.mse_loss(
                 predicted_perturbed_expression,
                 observed_perturbed_expression,
@@ -209,7 +212,7 @@ class BiolordStar(PerturbationModel):
             else:
                 recon_loss = masked_loss.mean()
         else:
-            # 回退到全局平均 MSE
+            # Fallback to standard MSE
             recon_loss = F.mse_loss(
                 predicted_perturbed_expression,
                 observed_perturbed_expression,
@@ -221,7 +224,7 @@ class BiolordStar(PerturbationModel):
         total_loss = recon_loss + penalty_term
 
         # Compute training PCC (use mask if enabled)
-        mask = self._get_mask_for_pcc(batch)
+        mask = self._get_mask(batch)
         if mask is not None:
             mask = mask.to(predicted_perturbed_expression.device)
         train_pcc = self._compute_masked_pcc(predicted_perturbed_expression, observed_perturbed_expression, mask)
@@ -257,9 +260,10 @@ class BiolordStar(PerturbationModel):
         predicted_perturbed_expression, penalty = self.forward(
             control_expression, batch, add_noise=False
         )
-        # 验证集同样优先使用表达 mask 计算 loss
-        if self.use_mask and hasattr(batch, "pert_expression_mask"):
-            mask = batch.pert_expression_mask.to(predicted_perturbed_expression.device).float()
+        # Use expression mask for loss calculation - only compute loss on expressed genes
+        mask = self._get_mask(batch)
+        if mask is not None:
+            mask = mask.to(predicted_perturbed_expression.device)
             masked_loss = F.mse_loss(
                 predicted_perturbed_expression,
                 observed_perturbed_expression,
@@ -271,6 +275,7 @@ class BiolordStar(PerturbationModel):
             else:
                 val_recon_loss = masked_loss.mean()
         else:
+            # Fallback to standard MSE
             val_recon_loss = F.mse_loss(
                 predicted_perturbed_expression,
                 observed_perturbed_expression,
@@ -282,7 +287,7 @@ class BiolordStar(PerturbationModel):
         val_loss = val_recon_loss + penalty_term
 
         # Compute validation PCC (use mask if enabled)
-        mask = self._get_mask_for_pcc(batch)
+        mask = self._get_mask(batch)
         if mask is not None:
             mask = mask.to(predicted_perturbed_expression.device)
         val_pcc = self._compute_masked_pcc(predicted_perturbed_expression, observed_perturbed_expression, mask)

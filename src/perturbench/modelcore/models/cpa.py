@@ -380,7 +380,8 @@ class CPA(PerturbationModel):
     ):
         """Computes the reconstruction loss (AE) or the ELBO (VAE)"""
         # Use expression mask for loss calculation - only compute loss on expressed genes
-        if self.use_mask and hasattr(batch, "pert_expression_mask"):
+        mask = self._get_mask(batch)
+        if mask is not None:
             # Get per-gene loss (shape: [batch_size, n_genes])
             predictions = generative_outputs["predictions"]
             masked_loss = F.mse_loss(
@@ -389,7 +390,7 @@ class CPA(PerturbationModel):
                 reduction='none'
             )  # shape: [batch_size, n_genes]
 
-            mask = batch.pert_expression_mask.to(masked_loss.device).float()
+            mask = mask.to(masked_loss.device)
             valid = mask.sum()
 
             if valid > 0:
@@ -677,7 +678,7 @@ class CPA(PerturbationModel):
             # Compute training PCC (use mask if enabled)
             predictions = generative_outputs["predictions"]
             observed = batch.pert_cell_counts
-            mask = self._get_mask_for_pcc(batch)
+            mask = self._get_mask(batch)
             if mask is not None:
                 mask = mask.to(predictions.device)
             train_pcc = self._compute_masked_pcc(predictions, observed, mask)
@@ -718,7 +719,7 @@ class CPA(PerturbationModel):
         # Compute validation PCC (use mask if enabled)
         predictions = generative_outputs["predictions"]
         observed = batch.pert_cell_counts
-        mask = self._get_mask_for_pcc(batch)
+        mask = self._get_mask(batch)
         if mask is not None:
             mask = mask.to(predictions.device)
         val_pcc = self._compute_masked_pcc(predictions, observed, mask)

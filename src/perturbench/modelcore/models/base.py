@@ -183,7 +183,7 @@ class PerturbationModel(L.LightningModule, ABC):
         pcc_per_cell = num / den
         return pcc_per_cell.mean()
 
-    def _get_mask_for_pcc(self, batch) -> torch.Tensor:
+    def _get_mask(self, batch) -> torch.Tensor:
         """
         Get expression mask from batch if use_mask is enabled.
 
@@ -390,10 +390,7 @@ class PerturbationModel(L.LightningModule, ABC):
             # ---- Determine evaluation features (gene subset) ----
             eval_features = None
             # Use self.use_mask for unified control (training + evaluation)
-            # Fallback to evaluation_config.use_masked_genes for backward compatibility
-            use_masked_genes = getattr(self, "use_mask", False) or getattr(self.evaluation_config, "use_masked_genes", False)
-
-            if use_masked_genes:
+            if getattr(self, "use_mask", False):
                 # Construct gene mask from training dataset expression mask
                 try:
                     train_dataset = self.datamodule.train_dataset
@@ -404,22 +401,22 @@ class PerturbationModel(L.LightningModule, ABC):
                             pert_mask = pert_mask.toarray()
                         elif hasattr(pert_mask, "A"):
                             pert_mask = pert_mask.A
-                        
+
                         # Aggregate mask across cells: a gene is "masked" if it's expressed in at least one cell
                         # This matches the training loss logic where we only optimize on expressed genes
                         gene_mask = (pert_mask.sum(axis=0) > 0).astype(bool)
-                        
+
                         # Apply infer_gene_ids if present
                         if hasattr(self, 'infer_gene_ids'):
                             gene_mask = gene_mask[self.infer_gene_ids]
-                        
+
                         # Get gene names that pass the mask
                         eval_features = [gene_names[i] for i in range(len(gene_names)) if gene_mask[i]]
-                        
+
                         print(f"[Rank 0] Using masked genes for evaluation: {len(eval_features)} / {len(gene_names)} genes")
                         sys.stdout.flush()
                     else:
-                        print("[Rank 0] Warning: use_masked_genes=True but train_dataset has no pert_expression_mask. Using all genes.")
+                        print("[Rank 0] Warning: use_mask=True but train_dataset has no pert_expression_mask. Using all genes.")
                         sys.stdout.flush()
                 except Exception as e:
                     print(f"[Rank 0] Warning: Failed to construct gene mask: {e}. Using all genes.")
@@ -504,19 +501,19 @@ class PerturbationModel(L.LightningModule, ABC):
             # Add checkpoint type suffix to distinguish predictions from different checkpoints
             if ckpt_type and ckpt_type != "unknown":
                 pred_h5ad_path = os.path.join(summary_dir, f"predictions_{ckpt_type}.h5ad")
-                ref_h5ad_path = os.path.join(summary_dir, f"reference_{ckpt_type}.h5ad")
+                # ref_h5ad_path = os.path.join(summary_dir, f"reference_{ckpt_type}.h5ad")  # Disabled: no longer saving reference files
             else:
                 pred_h5ad_path = os.path.join(summary_dir, "predictions.h5ad")
-                ref_h5ad_path = os.path.join(summary_dir, "reference.h5ad")
+                # ref_h5ad_path = os.path.join(summary_dir, "reference.h5ad")  # Disabled: no longer saving reference files
             # Track whether files were saved successfully
             files_saved = False
             try:
                 predicted_adata.write(pred_h5ad_path)
-                reference_adata.write(ref_h5ad_path)
+                # reference_adata.write(ref_h5ad_path)  # Disabled: no longer saving reference files to save disk space
                 files_saved = True
                 print(f"[Rank 0] Prediction files saved to: {summary_dir}")
                 print(f"[Rank 0]   - predictions.h5ad: {pred_h5ad_path}")
-                print(f"[Rank 0]   - reference.h5ad: {ref_h5ad_path}")
+                # print(f"[Rank 0]   - reference.h5ad: {ref_h5ad_path}")  # Disabled: no longer saving reference files
                 sys.stdout.flush()
             except OSError as e:
                 # Handle disk quota exceeded and other disk-related errors gracefully
@@ -537,9 +534,9 @@ class PerturbationModel(L.LightningModule, ABC):
             print(f"[Rank 0] Evaluation finished. Results saved to {csv_path}")
             if files_saved:
                 print(f"[Rank 0] Summary files also saved to {summary_dir}")
-                print("[Rank 0] Test predictions and reference saved to:")
+                print("[Rank 0] Test predictions saved to:")
                 print(f"[Rank 0]   - Predictions: {pred_h5ad_path}")
-                print(f"[Rank 0]   - Reference: {ref_h5ad_path}")
+                # print(f"[Rank 0]   - Reference: {ref_h5ad_path}")  # Disabled: no longer saving reference files
             else:
                 print("[Rank 0] WARNING: Prediction files were not saved due to disk space issues.")
             print(f"[Rank 0]   - Summary metrics: {summary_csv_path}")

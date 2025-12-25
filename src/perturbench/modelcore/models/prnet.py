@@ -330,10 +330,10 @@ class PRNet(PerturbationModel):
         x_obs = batch.pert_cell_counts
         x_ctrl = batch.control_cell_counts
 
-        # Get expression mask if available
-        mask = None
-        if self.use_mask and hasattr(batch, "pert_expression_mask"):
-            mask = batch.pert_expression_mask.to(x_obs.device).float()
+        # Get expression mask using unified method from base class
+        mask = self._get_mask(batch)
+        if mask is not None:
+            mask = mask.to(x_obs.device)
 
         out = self.forward(batch)
         total, rec = self._loss(
@@ -364,10 +364,10 @@ class PRNet(PerturbationModel):
         if x_ctrl is None or (hasattr(x_ctrl, 'numel') and x_ctrl.numel() == 0):
             x_ctrl = x_obs
 
-        # Get expression mask if available
-        mask = None
-        if self.use_mask and hasattr(batch, "pert_expression_mask"):
-            mask = batch.pert_expression_mask.to(x_obs.device).float()
+        # Get expression mask using unified method from base class
+        mask = self._get_mask(batch)
+        if mask is not None:
+            mask = mask.to(x_obs.device)
 
         out = self.forward(batch)
         total, rec = self._loss(

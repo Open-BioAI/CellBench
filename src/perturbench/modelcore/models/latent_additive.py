@@ -160,7 +160,7 @@ class LatentAdditive(PerturbationModel):
         )
 
         # Use expression mask for loss calculation - only compute loss on expressed genes
-        mask = self._get_mask_for_pcc(batch)
+        mask = self._get_mask(batch)
         if mask is not None:
             mask = mask.to(predicted_perturbed_expression.device)
             masked_loss = F.mse_loss(
@@ -196,7 +196,7 @@ class LatentAdditive(PerturbationModel):
         )
 
         # Use expression mask for loss calculation - only compute loss on expressed genes
-        mask = self._get_mask_for_pcc(batch)
+        mask = self._get_mask(batch)
         if mask is not None:
             mask = mask.to(predicted_perturbed_expression.device)
             masked_loss = F.mse_loss(

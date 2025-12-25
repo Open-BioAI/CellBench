@@ -1,1 +1,0 @@
-wget -c --progress=bar:force:noscroll -P /fs-computility/prime/maoxinjie/AIVC/perturbench-main/notebooks/neurips2025/perturbench_data https://zenodo.org/records/7041849/files/SrivatsanTrapnell2020_sciplex3.h5ad?download=1

@@ -27,7 +27,7 @@ class GEARS(PerturbationModel):
                  control_val,
                  gene2go_path,
                  build_GO_workers,
-                 gene_set_path=None,
+                 gene_set_path,  # Required: must provide external pkl file
                  seed=42,
                  use_mask: bool = False,  # Unified mask switch for training loss and evaluation
                  lr=1e-3,
@@ -84,13 +84,19 @@ class GEARS(PerturbationModel):
 
         self.dict_filter=self.get_dropout_non_zero_genes(adata)
 
-        if gene_set_path is not None:
-            #If gene set specified for perturbation graph, use that
-            with open(gene_set_path, 'rb') as f:
-               pert_list = pickle.load(f)
-        else:
-            pert_list = self.get_perts_list(adata)
+        # Force use of external pkl file - gene_set_path is required
+        if gene_set_path is None:
+            raise ValueError("gene_set_path must be provided. External pkl file is required.")
+        
+        # Load perturbation list from external pkl file
+        with open(gene_set_path, 'rb') as f:
+            pert_list = pickle.load(f)
+        
+        # Fallback logic commented out - must use external pkl
+        # else:
+        #     pert_list = self.get_perts_list(adata)
 
+        # Load gene2go mapping from external pkl file (required)
         with open( gene2go_path, 'rb') as f:
             gene2go = pickle.load(f)
 
@@ -271,13 +277,10 @@ class GEARS(PerturbationModel):
         input_dict = self.get_input_dict(batch)
         y=batch['pert_cell_counts']
 
-        # Get expression mask if available
-        mask = None
-        if self.use_mask and 'pert_expression_mask' in batch:
-            mask = batch['pert_expression_mask'].to(y.device)
-            if mask.is_sparse:
-                mask = mask.to_dense()
-            mask = mask.float()
+        # Get expression mask using unified method from base class
+        mask = self._get_mask(batch)
+        if mask is not None:
+            mask = mask.to(y.device)
 
         if self.config['uncertainty']:
             pred, logvar = self.model(input_dict)
@@ -316,15 +319,10 @@ class GEARS(PerturbationModel):
         # 兼容 dict 和 Batch 对象
         y = batch['pert_cell_counts'] if isinstance(batch, dict) else batch.pert_cell_counts
 
-        # Get expression mask if available for validation loss
-        mask = None
-        has_mask = ('pert_expression_mask' in batch) if isinstance(batch, dict) else hasattr(batch, 'pert_expression_mask')
-        if self.use_mask and has_mask:
-            mask_raw = batch['pert_expression_mask'] if isinstance(batch, dict) else batch.pert_expression_mask
-            mask = mask_raw.to(y.device)
-            if mask.is_sparse:
-                mask = mask.to_dense()
-            mask = mask.float()
+        # Get expression mask using unified method from base class
+        mask = self._get_mask(batch)
+        if mask is not None:
+            mask = mask.to(y.device)
 
         # Simple masked MSE for validation
         mse = (pred - y) ** 2

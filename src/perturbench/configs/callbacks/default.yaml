@@ -29,10 +29,12 @@ model_checkpoint_pcc:
   save_top_k: 1
   save_last: false  # Disable to save disk space, only save best checkpoint
 
-# Optional: Save last checkpoint for easy resume (uncomment to enable)
-model_checkpoint_last:
-  _target_: perturbench.modelcore.callbacks.robust_checkpoint.RobustModelCheckpoint
-  dirpath: ${paths.output_dir}/checkpoints
-  filename: "last"
-  save_top_k: 0  # Don't save best, only last
-  save_last: true
+# Optional: Save last checkpoint for easy resume
+# Disabled by default to save disk space (only keep best loss and PCC checkpoints)
+# Uncomment to enable:
+# model_checkpoint_last:
+#   _target_: perturbench.modelcore.callbacks.robust_checkpoint.RobustModelCheckpoint
+#   dirpath: ${paths.output_dir}/checkpoints
+#   filename: "last"
+#   save_top_k: 0  # Don't save best, only last
+#   save_last: true

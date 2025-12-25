@@ -4,3 +4,4 @@ early_stopping:
   monitor: val_PCC_epoch
   # patience: 50 # early stopping patience
   patience: 10
+  check_on_train_epoch_end: false  # Only check after validation, not after training epoch

@@ -20,7 +20,30 @@ class RobustModelCheckpoint(ModelCheckpoint):
     def _save_checkpoint(self, trainer: L.Trainer, filepath: str) -> None:
         """
         Override the checkpoint saving method to handle disk quota errors.
+        Also removes old versioned checkpoints to save disk space.
         """
+        import os
+        import glob
+        
+        # Before saving, remove old versioned checkpoints with the same base name
+        # This prevents accumulation of -v1, -v2, -v3 files
+        if os.path.exists(filepath):
+            # If the exact file exists, remove it first
+            try:
+                os.remove(filepath)
+            except OSError:
+                pass  # Ignore if file is locked or doesn't exist
+        
+        # Find and remove versioned files (e.g., filepath-v1.ckpt, filepath-v2.ckpt)
+        base_path = filepath.rsplit('.', 1)[0]  # Remove .ckpt extension
+        versioned_pattern = f"{base_path}-v*.ckpt"
+        for old_file in glob.glob(versioned_pattern):
+            try:
+                os.remove(old_file)
+                log.debug(f"Removed old versioned checkpoint: {old_file}")
+            except OSError:
+                pass  # Ignore if file is locked
+        
         try:
             # Call the parent method to save the checkpoint
             super()._save_checkpoint(trainer, filepath)

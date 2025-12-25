@@ -3,9 +3,10 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+SWEEP_USAGE.md
 # C extensions
 *.so
-
+unseen_perts.csv
 # Distribution / packaging
 .Python
 build/
@@ -205,10 +206,6 @@ check/*.h5ad
 *.pt
 
 # Keep small mapping .pt files in version control
-!cov_maps.pt
-!crispr_map.pt
-!drug_map.pt
-!env_map.pt
 
 # Output and logs
 output/
@@ -226,3 +223,18 @@ cpa/
 # OS generated files
 .DS_Store
 Thumbs.db
+#else
+zombie.py
+run_multi_agents_update.sh
+wandb_sweep_biolord.yaml
+wandb_agents.yaml
+wandb_sweep.sh
+update_sweep.sh
+pyproject.toml
+sweep.yaml
+create_sweep.sh
+launch.json
+preprocess_data_with_split.py
+run_multi_gpu_agents.sh
+run_one_agent.sh
+scgpt_install.sh

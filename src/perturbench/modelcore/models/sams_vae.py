@@ -365,7 +365,7 @@ class SparseAdditiveVAE(PerturbationModel):
         covariates = {cov_key:batch[cov_key] for cov_key in self.cov_keys}
 
         # Get expression mask if available
-        mask = self._get_mask_for_pcc(batch)
+        mask = self._get_mask(batch)
         if mask is not None:
             mask = mask.to(observed_perturbed_expression.device)
 
@@ -417,7 +417,7 @@ class SparseAdditiveVAE(PerturbationModel):
         covariates = {cov_key: batch[cov_key] for cov_key in self.cov_keys}
 
         # Get expression mask if available
-        mask = self._get_mask_for_pcc(batch)
+        mask = self._get_mask(batch)
         if mask is not None:
             mask = mask.to(observed_perturbed_expression.device)
 

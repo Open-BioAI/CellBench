@@ -1,240 +1,319 @@
-# PerturBench
-We present a comprehensive framework, PerturBench for predicting the effects of perturbations in single cells, designed to standardize benchmarking in this rapidly evolving field. We include a user-friendly platform, diverse datasets, metrics for fair model comparison, and detailed performance analysis.
+# CellBench
 
-If you use PerturBench in your work, please consider citing [Wu, Wershof, Shmon, Nassar, Osinski, and Eksi et al, 2024](https://arxiv.org/abs/2408.10609):
+We present a comprehensive framework, **CellBench**, for predicting the effects of perturbations in single cells. Designed to standardize benchmarking in this rapidly evolving field, it includes a user-friendly platform, diverse datasets, metrics for fair model comparison, and detailed performance analysis.
+
+## Installation
+
+Bash
+
 ```
-@misc{wu2024perturbenchbenchmarkingmachinelearning,
-      title={PerturBench: Benchmarking Machine Learning Models for Cellular Perturbation Analysis}, 
-      author={Yan Wu and Esther Wershof and Sebastian M Schmon and Marcel Nassar and Błażej Osiński and Ridvan Eksi and Kun Zhang and Thore Graepel},
-      year={2024},
-      eprint={2408.10609},
-      archivePrefix={arXiv},
-      primaryClass={cs.LG},
-      url={https://arxiv.org/abs/2408.10609}, 
-}
-```
-
-## Install PerturBench
-```
-conda create -n [env-name] python=3.11
-conda activate [env-name]
-cd [/path/to/PerturBench/]
-pip3 install -e .
-# or
-pip3 install -e .[cli]
-```
-for command line extras such as the `rich` package, which gives you neater progress bars.
-
-## Downloading and Preparing Datasets
-
-### Dataset Access
-For convenience, we've uploaded all processed datasets as gzipped h5ad files to Hugging Face at: https://huggingface.co/datasets/altoslabs/perturbench/tree/main.
-
-We also provide accessor functions to automatically download and cache the Srivatsan20, Norman19, and Frangieh21 datasets as either [AnnData objects](https://anndata.readthedocs.io/en/latest/) or a [PyTorch Datasets](https://pytorch.org/tutorials/beginner/basics/data_tutorial.html).
-```
-from perturbench.data.accessors.srivatsan20 import Sciplex3
-
-srivatsan20_accessor = Sciplex3()
-adata = srivatsan20_accessor.get_anndata() ## Get the preprocessed anndata object
-torch_dataset = srivatsan20_accessor.get_dataset() ## Get a PyTorch Dataset
+conda create -n cellbench python=3.11
+conda activate cellbench
+git clone https://github.com/Open-BioAI/CellBench.git
+cd CellBench
+pip install -e .
 ```
 
-To reproduce the curation and preprocessing steps used to generate these datasets, first create a local cache directory (i.e. `~/perturbench_data`) and set the `data_cache_dir` variable in the curation notebooks in `notebooks/neurips2024/data_curation` to the cache you created. Please also set the `data_dir` variable in `src/configs/paths/default.yaml` to the correct data cache path as well.
+------
 
-Once you've set the correct local cache paths, please run the curation notebooks and scripts which will download the datasets, curate the metadata, and run standard scRNA-seq preprocessing with scanpy. Note that the McFalineFigueroa23 and Jiang24 data curation requires two steps as the downloaded files are Seurat objects and need to be converted to anndata h5ad files.
+## Project Structure
 
-### Data Splitting
-The Frangieh21 and Jiang24 datasets require manual splits that can be generated using the `notebooks/build_jiang24_frangieh21_splits.ipynb` notebook. For the McFalineFigueroa23 data scaling experiments and the Srivatsan20 imbalance experiments, you can generate the custom splits using the `notebooks/build_data_scaling_splits.ipynb` and `notebooks/build_imbalance_splits.ipynb` notebooks respectively.
+Plaintext
 
-## Usage
-
-### Evaluator Class
-If you just want to use our suite of metrics on your own custom model or generated predictions, we provide an `Evaluator` class. This class requires predicted scRNA-seq responses to perturbations as anndata objects, and will return a dataframe of average metrics for each model. More in-depth examples of using the `Evaluator` class can be found in the `notebooks/demos/evaluator_demo.ipynb` notebook.
-
-### Hydra Training Script
-To run end-to-end model training, inference, and evaluation, we provide a training script that is integrated with the Hydra configuration system. This script can be found under `src/perturbench/modelcore/train.py` and can be executed as follows:
-
-```python
-python <path-to-repo-folder>/src/perturbench/modelcore/train.py <config-options>
 ```
-The configuration options are discussed in the Configuration System section. If the repo is installed using pip (setuptools) via `pip install`, the `train.py`` is added to the environment as an executable script. As a result the above command can be shortened and called anywhere as follows:
-```python
-train <config-options>
+perturbench/
+├── src/perturbench/
+│   ├── configs/          # Hydra configuration files
+│   │   ├── model/        # Model configurations (*.yaml)
+│   │   ├── data/         # Dataset configurations
+│   │   └── experiment/   # Experiment configurations
+│   ├── modelcore/
+│   │   ├── models/       # Model implementations
+│   │   │   ├── base.py   # PerturbationModel base class
+│   │   │   ├── latent_additive.py
+│   │   │   ├── cpa.py
+│   │   │   └── ...
+│   │   └── train.py      # Training entry point
+│   └── data/             # Data loading modules
+└── data/                 # Directory for storing datasets
 ```
 
-### Automated Evaluation
-Model evaluation is built into the `src/perturbench/modelcore/train.py` script and by default will run automatically. Evaluation parameters are specified in the `src/perturbench/configs/data/evaluation/default.yaml` and the specific set of metrics used is controlled by the `evaluation_pipelines` parameter. 
+------
 
-To specify an evaluation pipeline, the user first needs to specify an aggregation (`aggregation`) method (`average`, `logfc`, `logp`, `var`) which generates an aggregate measure of expression/change in expression due to perturbation. The user also needs to specify an evaluation metric (`metric`) that compares observed vs predicted changes (`cosine`, `pearson`, `rmse`, `mse`, `mae`, `r2_score`). Finally, if the user wants this pipeline to also generate rank metrics, they need to set `rank: True` in the pipeline.
+## Quick Start: Running Training
 
-The default pipeline is:
+Bash
+
+```
+# Run using a predefined experiment configuration
+train experiment=neurips2024/norman19/latent_best_params_norman19
+
+# Override parameters via command line
+train model=latent_additive data=srivatsan2020 trainer.max_epochs=50
+```
+
+------
+
+## How to Add a New Model
+
+### Workflow Flowchart
+
+Plaintext
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Step 1: Create Model Class                                     │
+│  src/perturbench/modelcore/models/my_model.py                   │
+│  Inherit PerturbationModel, implement forward() & training_step()│
+└──────────────────────────┬──────────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Step 2: Register Model                                         │
+│  src/perturbench/modelcore/models/__init__.py                   │
+│  Add: from .my_model import MyModel                             │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Step 3: Create Configuration File                              │
+│  src/perturbench/configs/model/my_model.yaml                    │
+│  Define _target_ and hyperparameters                            │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Step 4: Run Experiment                                         │
+│  train model=my_model data=srivatsan2020                        │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Step 1: Create the Model Class
+
+Create `my_model.py` in `src/perturbench/modelcore/models/`:
+
+Python
+
+```
+import torch
+import torch.nn.functional as F
+import lightning as L
+from .base import PerturbationModel
+from ..nn import MixedPerturbationEncoder
+
+class MyModel(PerturbationModel):
+    """Your model description here"""
+
+    def __init__(
+        self,
+        datamodule: L.LightningDataModule | None = None,
+        hidden_dim: int = 128,
+        lr: float = 1e-3,
+        **kwargs
+    ):
+        # 1. Initialize parent class (datamodule is required)
+        super().__init__(datamodule, lr=lr, **kwargs)
+
+        # 2. Save hyperparameters (ignore datamodule object)
+        self.save_hyperparameters(ignore=['datamodule'])
+
+        # 3. Build network layers
+        self.encoder = torch.nn.Linear(self.n_genes, hidden_dim)
+        self.decoder = torch.nn.Linear(hidden_dim, self.n_genes)
+
+        # 4. Use MixedPerturbationEncoder to handle perturbation embeddings
+        self.pert_encoder = MixedPerturbationEncoder(
+            gene_pert_dim=self.gene_pert_dim,
+            drug_pert_dim=self.drug_pert_dim,
+            env_pert_dim=self.env_pert_dim,
+            final_embed_dim=hidden_dim
+        )
+
+    def forward(self, batch) -> torch.Tensor:
+        """
+        Forward Propagation
+
+        Args:
+            batch: A Batch object containing:
+                - control_cell_counts: Control group expression [B, n_genes]
+                - gene_pert / drug_pert / env_pert: Perturbation encodings
+                - pert_cell_counts: Post-perturbation expression (for training)
+
+        Returns:
+            predicted_expression: Predicted post-perturbation expression [B, n_genes]
+        """
+        # Encode control cell state
+        control_expr = batch.control_cell_counts
+        latent = self.encoder(control_expr)
+
+        # Encode perturbation effects
+        pert_effect = self.pert_encoder(batch)
+
+        # Additive model: latent state + perturbation effect
+        perturbed_latent = latent + pert_effect
+
+        # Decode to predict expression
+        return self.decoder(perturbed_latent)
+
+    def training_step(self, batch, batch_idx: int) -> torch.Tensor:
+        """Training Step - Loss Calculation"""
+        pred = self.forward(batch)
+        target = batch["pert_cell_counts"]
+
+        # Optional: Use a mask to calculate loss only on expressed genes
+        mask = self._get_mask(batch)
+        if mask is not None:
+            loss = (F.mse_loss(pred, target, reduction='none') * mask).sum() / mask.sum()
+        else:
+            loss = F.mse_loss(pred, target)
+
+        self.log("train_loss", loss, prog_bar=True)
+        return loss
+
+    def validation_step(self, batch, batch_idx: int):
+        """Validation Step"""
+        pred = self.forward(batch)
+        target = batch["pert_cell_counts"]
+        loss = F.mse_loss(pred, target)
+        self.log("val_loss", loss, prog_bar=True)
+```
+
+### Step 2: Register the Model
+
+Edit `src/perturbench/modelcore/models/__init__.py`:
+
+Python
+
+```
+from .base import PerturbationModel
+from .my_model import MyModel  # Add this line
+# ... other models
+```
+
+### Step 3: Create the Configuration File
+
+Create `src/perturbench/configs/model/my_model.yaml`:
+
+YAML
+
+```
+_target_: perturbench.modelcore.models.MyModel
+hidden_dim: 128
+lr: 1e-3
+wd: 1e-5
+use_mask: true
+
+# LR Scheduler configuration
+lr_scheduler_mode: plateau
+lr_scheduler_patience: 5
+lr_scheduler_factor: 0.5
+```
+
+### Step 4: Run Training
+
+Bash
+
+```
+train model=my_model data=srivatsan2020 trainer.max_epochs=100
+```
+
+------
+
+## Key API Reference
+
+### Core Attributes of `PerturbationModel` Base Class
+
+| **Attribute**        | **Type** | **Description**                                |
+| -------------------- | -------- | ---------------------------------------------- |
+| `self.n_genes`       | int      | Number of genes                                |
+| `self.gene_pert_dim` | int      | Dimension of gene perturbation encoding        |
+| `self.drug_pert_dim` | int      | Dimension of drug perturbation encoding        |
+| `self.env_pert_dim`  | int      | Dimension of environment perturbation encoding |
+| `self.cov_keys`      | list     | List of covariate keys                         |
+| `self.control_val`   | str      | Identifier value for the control group         |
+
+### Batch Data Structure
+
+Python
+
+```
+batch.control_cell_counts   # [B, n_genes] Control group expression
+batch.pert_cell_counts      # [B, n_genes] Post-perturbation ground truth
+batch.gene_pert             # [B, gene_pert_dim] Gene perturbation encoding
+batch.drug_pert             # [B, drug_pert_dim] Drug perturbation encoding
+batch.env_pert              # [B, env_pert_dim] Environment perturbation encoding
+batch.pert_expression_mask  # [B, n_genes] Expressed gene mask (optional)
+batch[cov_key]              # Covariates (e.g., cell_type)
+```
+
+------
+
+## Configuration System (Hydra)
+
+### Command Line Overrides
+
+Bash
+
+```
+train model=my_model trainer.max_epochs=50 model.hidden_dim=256
+```
+
+### Creating Experiment Configurations
+
+Create `src/perturbench/configs/experiment/my_exp.yaml`:
+
+YAML
+
+```
+# @package _global_
+defaults:
+  - override /model: my_model
+  - override /data: srivatsan2020
+
+trainer:
+  max_epochs: 100
+
+model:
+  hidden_dim: 256
+  lr: 5e-4
+```
+
+Run: `train experiment=my_exp`
+
+------
+
+## Evaluation Metrics
+
+The built-in evaluation pipelines run automatically. Configuration is located at `src/perturbench/configs/data/evaluation/`:
+
+YAML
+
 ```
 evaluation_pipeline:
-  - aggregation: average
-    metric: rmse
+  - aggregation: average   # average, logfc, logp, var
+    metric: rmse           # rmse, mse, mae, cosine, pearson, r2_score
     rank: True
   - aggregation: logfc
     metric: cosine
 ```
 
-To add another pipeline, simply add another list element. For example to add `logp` aggregation which uses log-pvalues (similar to the NeurIPS competition):
-```
-evaluation_pipeline:
-  - aggregation: logp
-    metric: cosine
-```
+------
 
-To run evaluation on a pre-trained model, the user can simply set `train: False` in the main `train.yaml` config and specify a path to the model checkpoint to use in the `ckpt_path` parameter. An example experiment config that runs evaluation only is at `src/perturbench/configs/experiment/evaluation_only_example.yaml`.
+## Existing Models
 
-### Prediction
-To generate predictions using a pre-trained model, we'll need:
-- A trained model checkpoint
-- A path to a dataset to use for inference (only control cells will be used)
-- A csv file containing the desired counterfactual perturbations to predict and relevant covariates. An example of how to generate this csv file is at `notebooks/demos/generate_prediction_dataframe.ipynb`
+| **Model**                          | **Config File**        | **Description**                                                      |
+| ---------------------------------- | ---------------------- | -------------------------------------------------------------------- |
+| LatentAdditive                     | `latent_additive.yaml` | Additive model in latent space                                       |
+| LinearAdditive                     | `linear_additive.yaml` | Additive model in linear (gene expression) space                     |
+| DecoderOnly                        | `decoder_only.yaml`    | Decoder-only model without control cell encoding                     |
+| CPA                                | `cpa.yaml`             | Compositional Perturbation Autoencoder with VAE                      |
+| GEARS                              | `gears.yaml`           | Graph-Enhanced Gene Activation Regularized System with GO annotation |
+| GenePert                           | `genepert.yaml`        | Perturbation model using GenePT gene embeddings                      |
+| scLAMBDA                           | `sclambda.yaml`        | VAE with Mutual Information minimization and adversarial training    |
+| Squidiff                           | `squidiff.yaml`        | Diffusion-based perturbation prediction model                        |
+| SparseAdditiveVAE                  | `sams_vae.yaml`        | Sparse Additive Mechanism Shift VAE (NeurIPS 2024)                   |
+| Biolord                            | `biolord.yaml`         | Biolord disentangled representation learning                         |
+| PRNet                              | `prnet.yaml`           | Perturbation Response Network with uncertainty estimation            |
+| StateTransitionPerturbationModel   | `state_sm.yaml`        | Transformer-based state transition model with LoRA support           |
+| scDFM                              | `scDFM.yaml`           | Distributional Flow Matching for single-cell perturbation            |
 
-To generate predictions:
-
-```python
-predict <config-options>
-```
-
-The configuration options are controlled by the default `src/perturbench/configs/predict.yaml` config file, and further discussed in the Configuration System section.
-
-### Configuration System
-
-This repo uses Hydra for configuration system management. A configuration setup and default settings are stored in `src/perturbench/configs`. This folders and the contained files should not be modified unless there are updates to the model codebase (such as adding new models, datasets, loggers, ...).
-
-Below we describe potential workflows to use the configuration system to scale your experimentation:
-
-1) Override any configuration parameter from the commandline
-```python
-train trainer.max_epoch=100 model=gene_sampling model.ngenes=10000 model.nsamples=5
-```
-This command overrides the `cfg.trainer.max_epoch` value and sets it to `100`. After that, it overrides the `cfg.model` to be the `gene_sampling` model and sets its parameters `ngenes` and `nsamples` to `10000` and `5`, respectively. 
-
-2) Add any additional parameters that were not defined in the configuration system
-```python
-python train.py +trainer.gradient_clip_val=0.5
-``` 
-This will add an attribute field `gradient_clip_val` to the trainer.
-
-3) A differentially written experiment configuration that overrides/augments the default configuration, for example,
-```python
-train experiment=example
-```
-where `experiment/example.yaml` contains the following: 
-```yaml
-# @package _global_
-
-defaults:
-  - override /data: mnist
-  - override /model: mnist
-  - override /callbacks: default
-  - override /trainer: default
-
-seed: 12345
-
-trainer:
-  max_epochs: 10
-  gradient_clip_val: 0.5
-
-data:
-  batch_size: 64
-
-logger:
-  aim:
-    experiment: "mnist"
-
-```
-This files uses the global configuration setup but overrides the `data`, `model`, `callbacks`, and `trainer`. After that it further sets the values of `seed`, `trainer.max_epochs`, `trainer.gradient_clip_val`,` data.batch_size`, and `logger.aim.experiment`.
-
- 
-4) Define your local experimental configuration
-
-In many cases, it might not be desirable to work on the configuration that is part of the library. As a result, it would be desirable to have a local configuration that the user can modify as they debug/develop their model. 
-
-Assume the user would like to use a local configuration directory `<local-path>/my_configs` to set his configurations. One way is to setup an experiment configuration based on the `experiment` configuration schema described in the previous point. Thus, the used will create the following files `<local-path>/my_configs/experiment/my_experiment.yaml`. Then, the user can execute his experiment as follows:
-```python
-train -cd <local-path>/my_configs experiment=my_experiment
-```
-
-_**Note**_: Any part of the configuration can be replicated in the local directory and would be augment to the library configuration.
-
-
-### Hyperparameter Optimization with Ray
-
-You can run HPO trials in parallel on an instance with multiple GPUs. This is enabled by Hydra's Optuna sweeper plugin and Ray launcher plugin. 
-
-An example of additional config for the plugins can be found at `src/perturbench/configs/hpo/local.yaml`
-
-Example command to run HPO on a single instance with multiple GPUs:
-
-```
-CUDA_VISIBLE_DEVICES=0,1 train hpo=latent_additive_hpo experiment=neurips2024/norman19/latent_best_params_norman19
-```
-
-### Reproducing arXiv results
-To reproduce the results from our ArXiv preprint, we provide best-params configs for each model and dataset. For example, to reproduce the linear model results for the Norman19 dataset, you can run:
-```
-train experiment=neurips2024/norman19/linear_best_params_norman19
-```
-
-## Model development requirements
-
-When creating a new model, you'll need to:
-1. Subclass the base `PerturbationModel` class which implements inference methods 
-```
-from .base import PerturbationModel
-
-class MyModel(PerturbationModel):
-```
-
-2. Pass the datamodule when initializing the superclass which enables the transforms and other key training information to be saved with the model checkpoint. You also need to save hyperparameters used to initialize the model (excluding the datamodule) so that the model can be easily instantiated for inference.
-```
-def __init__(
-  ...,
-  datamodule: L.LightningDataModule | None=None,
-):
-    super(LatentAdditive, self).__init__(datamodule)
-    self.save_hyperparameters(ignore=['datamodule'])
-```
-
-3. Define a `predict` method that takes in a batch of data and outputs a counterfactual prediction
-```
-def predict(self, batch):
-    control_expression = batch.gene_expression.squeeze()
-    perturbation = batch.perturbations.squeeze()
-    covariates = {
-        k:v.to(self.device) for k,v in batch.covariates.items()
-    }
-    
-    predicted_perturbed_expression = self.forward(
-        control_expression, 
-        perturbation,
-        covariates,
-    )
-    return predicted_perturbed_expression
-```
-
-## Adding a new dataset
-This section describes how to add a new dataset to benchmark against.
-
-### Data curation
-First download the dataset from GEO, figshare, or the desired database. [scPerturb](http://projects.sanderlab.org/scperturb/) and [pertpy](https://pertpy.readthedocs.io/en/latest/usage/usage.html#datasets) provide indexes of perturbational datasets with single cell readouts that might be of interest.
-
-If the dataset is not stored as an [anndata](https://anndata.readthedocs.io/en/latest/tutorials/notebooks/getting-started.html) file, you will need to convert it to an anndata file. It also may help to clean up some of the metadata columns. Example scripts of converting Seurat objects to anndata and metadata curation notebooks can be found at `notebooks/curation`.
-
-### Data preprocessing
-Most downloaded datasets will contain raw counts, which will need to be processed before model training. We provide a default preprocessing pipeline that applies standard log-normalization and filters for highly variable or differentially expressed genes. Specifically the counts for each cell are divided by the total counts for that cell, multiplied by a scaling factor (`1e4`), and then log-transformed. The dataset is then subset to the top 4000 highly variable genes and top 50 differentially expressed genes per perturbation (computed on a per covariate basis). If the perturbations are genetic, those genes are also included in the expression matrix by default. Datasets ending in `_preprocessed.h5ad` have been preprocessed.
-
-The unnormalized raw counts can be accessed in the `adata.layers['counts']` slot. To use raw counts instead of log-normalized expression add
-```
-data:
-  use_counts: True
-```
-to your experiment config.
-
-To preprocess a new dataset, use the `preprocess` function in `src/analysis/preprocess.py`.
-
-### Data config
-Once the dataset is preprocessed, you will need to create a dataset config file where you will specify which metadata columns contain the perturbations and covariates, as well as dataloader parameters. Example configs can be found at `src/configs/data`. You will also specifically need to specify how you want to split the data. You can select from a predefined split in the `src/configs/data/splitter` directory such as cross cell type or combination prediction splits. You can also specify a custom split saved as a `csv`. The data config is also where you specify the evaluation parameters, such as which metrics you want to evaluate. Configs that specify those parameters can be found in `src/configs/data/evaluation`.
