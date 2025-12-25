@@ -698,13 +698,16 @@ class GaussianDiffusion:
                 img = out["sample"]
 
     def _vb_terms_bpd(
-        self, model, x_start, x_t, t, clip_denoised=True, model_kwargs=None
+        self, model, x_start, x_t, t, clip_denoised=True, model_kwargs=None, mask=None
     ):
         """
         Get a term for the variational lower-bound.
 
-The resulting units are bits (rather than nats, as one might expect).
+        The resulting units are bits (rather than nats, as one might expect).
         This allows for comparison to other papers.
+
+        :param mask: if specified, a tensor of shape [N x C x ...] for masked loss calculation.
+                     Uses per-sample normalization for consistency with MSE loss.
 
         :return: a dict with the following keys:
                  - 'output': a shape [N] tensor of NLLs or KLs.
@@ -719,13 +722,30 @@ The resulting units are bits (rather than nats, as one might expect).
         kl = normal_kl(
             true_mean, true_log_variance_clipped, out["mean"], out["log_variance"]
         )
-        kl = mean_flat(kl) / np.log(2.0)
+
+        # Apply mask if provided (per-sample normalization)
+        if mask is not None:
+            # Align mask dimensions if needed
+            while mask.dim() < kl.dim():
+                mask = mask.unsqueeze(-1)
+            reduce_dims = list(range(1, kl.dim()))
+            valid = mask.sum(dim=reduce_dims).clamp(min=1.0)
+            kl = (kl * mask).sum(dim=reduce_dims) / valid / np.log(2.0)
+        else:
+            kl = mean_flat(kl) / np.log(2.0)
 
         decoder_nll = -discretized_gaussian_log_likelihood(
             x_start, means=out["mean"], log_scales=0.5 * out["log_variance"]
         )
         assert decoder_nll.shape == x_start.shape
-        decoder_nll = mean_flat(decoder_nll) / np.log(2.0)
+
+        # Apply mask if provided (per-sample normalization)
+        if mask is not None:
+            reduce_dims = list(range(1, decoder_nll.dim()))
+            valid = mask.sum(dim=reduce_dims).clamp(min=1.0)
+            decoder_nll = (decoder_nll * mask).sum(dim=reduce_dims) / valid / np.log(2.0)
+        else:
+            decoder_nll = mean_flat(decoder_nll) / np.log(2.0)
 
         # At the first timestep return the decoder NLL,
         # otherwise return KL(q(x_{t-1}|x_t,x_0) || p(x_{t-1}|x_t))
@@ -757,7 +777,7 @@ The resulting units are bits (rather than nats, as one might expect).
         model_kwargs['x_start'] = x_start
         terms = {}
         if self.loss_type == LossType.KL or self.loss_type == LossType.RESCALED_KL:
-            
+
             terms["loss"] = self._vb_terms_bpd(
                 model=model,
                 x_start=x_start,
@@ -765,10 +785,11 @@ The resulting units are bits (rather than nats, as one might expect).
                 t=t,
                 clip_denoised=False,
                 model_kwargs=model_kwargs,
+                mask=mask,  # 传递mask参数
             )["output"]
             if self.loss_type == LossType.RESCALED_KL:
                 terms["loss"] *= self.num_timesteps
-                
+
         #elif self.loss_type == LossType.MSE or self.loss_type == LossType.RESCALED_MSE:
         ## loss = MSE
         else:
@@ -790,6 +811,7 @@ The resulting units are bits (rather than nats, as one might expect).
                     x_t=x_t,
                     t=t,
                     clip_denoised=False,
+                    mask=mask,  # 传递mask参数
                 )["output"]
                 if self.loss_type == LossType.RESCALED_MSE:
                     # Divide by 1000 for equivalence with initial implementation.

@@ -216,7 +216,9 @@ wandb/
 wandb_logs/
 wandb_agent_gpu*.log
 tmp/
-
+.tmp/
+.ruff_cache/
+.idea/
 # Misc large directories
 fs-computility-new/
 cpa/

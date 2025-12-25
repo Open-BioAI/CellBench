@@ -5,6 +5,8 @@ import hydra
 from pathlib import Path
 from omegaconf import DictConfig, OmegaConf
 from typing import Optional
+# Custom command line resolver for hydra
+import argparse
 
 sys.path.append("../../")
 import vci.train.trainer as train
@@ -12,8 +14,7 @@ import vci.train.trainer as train
 log = logging.getLogger(__name__)
 # os.environ["NCCL_TIMEOUT"] = "36000"
 
-# Custom command line resolver for hydra
-import argparse
+
 
 
 def main(config_path: Optional[str] = None):
@@ -28,8 +29,7 @@ def main(config_path: Optional[str] = None):
 
     # Initialize hydra with the directory of the config file
     config_file = Path(args.conf)
-    config_dir = str(config_file.parent)
-    config_name = config_file.name
+    str(config_file.parent)
 
     # Initialize configuration
     with hydra.initialize_config_module(config_module=None, version_base=None):

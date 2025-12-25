@@ -3,8 +3,7 @@ import numpy as np
 import torch
 import os
 from src.tokenizer.gene_tokenizer import GeneVocab
-from typing import Optional, Dict
-import numpy as np
+from typing import Optional
 import pandas as pd
 from scipy import stats, sparse
 import networkx as nx
@@ -71,7 +70,7 @@ def save_checkpoint(model, optimizer, scheduler, iteration, eval_score, save_pat
         'eval_score': eval_score,
     }
     
-    checkpoint_path = os.path.join(save_path, f'checkpoint.pt')
+    checkpoint_path = os.path.join(save_path, 'checkpoint.pt')
     torch.save(checkpoint, checkpoint_path)
     print(f"save checkpoint to: {checkpoint_path}")
     
@@ -303,13 +302,6 @@ def get_perturbation_emb(vf, perturbation_id=None, perturbation_emb=None,
     return perturbation_emb
 
 
-import numpy as np
-import pandas as pd
-from scipy import stats, sparse
-import networkx as nx
-import torch
-from scipy import sparse
-
 
 def preprocess_expression(X, log1p=False, zscore_per_gene=True):
 
@@ -508,7 +500,7 @@ def build_gene_coexpression_graph(
     else:
         W = C  
 
-    sign_matrix = np.sign(W)
+    np.sign(W)
     if use_negative_edge:
         W = np.abs(W)
     # Sparsification

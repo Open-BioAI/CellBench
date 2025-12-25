@@ -1,9 +1,6 @@
 import torch
 from torch.utils.data import Dataset, DataLoader
-import pandas as pd
 import scanpy as sc
-import os
-import pickle
 import numpy as np
 from rdkit import Chem
 from rdkit.Chem import AllChem
@@ -38,13 +35,13 @@ def Drug_dose_encoder(drug_SMILES_list: list, dose_list: list, num_Bits=1024, co
 class AnnDataDataset(Dataset):
     def __init__(self, adata, control_adata=None,use_drug_structure=False,comb_num=1):
         self.use_drug_structure = use_drug_structure
-        if type(adata.X)==np.ndarray:
+        if isinstance(adata.X, np.ndarray):
             self.features = torch.tensor(adata.X, dtype=torch.float32)
         else:
             self.features = torch.tensor(adata.X.toarray(), dtype=torch.float32)
         
         if self.use_drug_structure:
-            if type(control_adata.X)==np.ndarray:
+            if isinstance(control_adata.X, np.ndarray):
                 self.control_features = torch.tensor(control_adata.X, dtype=torch.float32)
             else:
                 self.control_features = torch.tensor(control_adata.X.toarray(), dtype=torch.float32)

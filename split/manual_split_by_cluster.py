@@ -20,9 +20,9 @@ import pandas as pd
 import scanpy as sc
 
 from random_split_by_cluster import (
-    normalize_pert_string,
+    #normalize_pert_string,
     build_pert_key,
-    compute_cellline_sampling_weights,
+    #compute_cellline_sampling_weights,
     sample_counts_for_split,
     DEFAULT_H5AD,
     DEFAULT_OUTPUT_DIR,
@@ -84,7 +84,7 @@ def manual_split_by_cluster(
     # Compute test clusters as remaining
     assigned = set(train_clusters) | set(val_clusters)
     test_clusters = [int(c) for c in unique_clusters if int(c) not in assigned]
-    print(f"\nManual cluster assignment:")
+    print("\nManual cluster assignment:")
     print(f"  train clusters: {sorted(train_clusters)}")
     print(f"  val clusters:   {sorted(val_clusters)}")
     print(f"  test clusters:  {sorted(test_clusters)}")

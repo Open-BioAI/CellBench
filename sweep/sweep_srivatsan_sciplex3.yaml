@@ -1,5 +1,5 @@
 project: perturbench
-name: sciplex3_grid
+name: sciplex3_grid_1224_onlysciplex3
 method: grid
 
 metric:
@@ -10,10 +10,10 @@ parameters:
   # 固定项
   data:
     value: mix_pert
-  data.task:
-    value: srivatsantrapnell2020_sciplex3
+  # data.task:
+  #   value: srivatsantrapnell2020_sciplex3
   data.data_path:
-    value: /fs-computility-new/upzd_share/maoxinjie/AIVC/mxj/perturbench-main/data/all_cell_line_filterdrug.h5ad
+    value: /fs-computility-new/upzd_share/maoxinjie/AIVC/mxj/perturbench-main/data/srivatsan2020.h5ad
 
   train:
     value: true
@@ -53,10 +53,9 @@ parameters:
 
   logger:
     value: wandb
-  # logger.wandb.project:
-  #   value: perturbench
-  # logger.wandb.name:
-  #   value: sciplex3_grid_search
+  logger.wandb.project:
+    value: perturbench
+  # logger.wandb.name 会自动根据 model 名称生成，格式：{model}_lr{lr}
   # model.dropout:
   #   distribution: uniform
   #   min: 0.0

@@ -1,22 +1,16 @@
 import scanpy as sc
-import pandas as pd
 import numpy as np
-import json
 import torch
 import pickle
-from typing import Union, Optional
+from typing import Union
 from pathlib import Path
 import os
 # from cellflow.preprocessing import annotate_compounds, get_molecular_fingerprints
 from ..utils._preprocessing import annotate_compounds, get_molecular_fingerprints
-from src.data_process._datamanager import DataManager
 # from src.data_process._dataloader import TrainSampler, ValidationSampler, PredictionSampler
 # import pertpy
 import jax
-import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
-import pdb
-import tqdm
 from random import shuffle
 from ..utils.utils import build_gene_coexpression_graph,sorted_pad_mask
 # combosciplex url: https://figshare.com/articles/dataset/combosciplex/25062230?file=44229635
@@ -460,7 +454,6 @@ class BinDiscretizer:
 
         is_torch = isinstance(data, torch.Tensor)
         if is_torch:
-            orig_dtype = data.dtype
             data = data.detach().cpu().numpy()
 
         out = np.zeros_like(data, dtype=np.int64)
@@ -486,7 +479,6 @@ class BinDiscretizer:
 
         is_torch = isinstance(digitized, torch.Tensor)
         if is_torch:
-            orig_dtype = digitized.dtype
             digitized = digitized.detach().cpu().numpy()
 
         out = np.zeros_like(digitized, dtype=np.float64)

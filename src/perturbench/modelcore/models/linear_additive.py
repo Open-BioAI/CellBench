@@ -2,7 +2,6 @@ import lightning as L
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np
 
 from perturbench.data.types import Batch
 from .base import PerturbationModel

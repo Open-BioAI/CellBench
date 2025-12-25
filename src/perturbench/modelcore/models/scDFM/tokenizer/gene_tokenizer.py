@@ -771,7 +771,7 @@ def batch_encode_genes(
     if max_length is None:
         max_length = max(len(genes) for genes in gene_lists)
     
-    batch_size = len(gene_lists)
+    len(gene_lists)
     gene_ids = []
     attention_mask = []
     

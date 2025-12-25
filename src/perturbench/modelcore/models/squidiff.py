@@ -1,7 +1,6 @@
 from __future__ import annotations
 from typing import Dict, Optional
 
-import pandas as pd
 import torch
 import torch.nn as nn
 import lightning as L
@@ -11,7 +10,6 @@ from perturbench.data.types import Batch
 from ..nn import MixedPerturbationEncoder
 
 from perturbench.modelcore.nn.squidiff.script_util import (
-    model_and_diffusion_defaults,
     create_model_and_diffusion,
 )
 
@@ -102,6 +100,7 @@ class Squidiff(PerturbationModel):
         schedule_sampler: str = "uniform",
         use_pretrained_cell_emb:bool= False,
         use_cell_emb: bool | None = None,
+        use_mask: bool = True,  # 控制是否使用mask计算loss，默认启用
         datamodule: Optional[L.LightningDataModule] = None,
     ):
         super().__init__(datamodule=datamodule, lr=lr, wd=wd,
@@ -111,7 +110,8 @@ class Squidiff(PerturbationModel):
                          lr_scheduler_factor=lr_scheduler_factor,
                          lr_scheduler_mode=lr_scheduler_mode,
                          lr_scheduler_max_lr=lr_scheduler_max_lr,
-                         lr_scheduler_total_steps=lr_scheduler_total_steps)
+                         lr_scheduler_total_steps=lr_scheduler_total_steps,
+                         use_mask=use_mask)
 
         self.cov_keys = cov_keys
         self.pert_key=pert_key

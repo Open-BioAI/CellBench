@@ -9,7 +9,6 @@ Randomly split clusters in all_cell_line_filterdrug.h5ad into train/val/test set
 - Do NOT modify the original h5ad file
 """
 
-import os
 import argparse
 from pathlib import Path
 
@@ -296,7 +295,7 @@ def random_split_by_cluster(
     n_val_after = n_val_before - n_val_removed
     n_test_after = n_test_before - n_test_removed
     
-    print(f"\nFiltering results:")
+    print("\nFiltering results:")
     print(f"  val:  {n_val_before:,} -> {n_val_after:,} (removed {n_val_removed:,} cells)")
     print(f"  test: {n_test_before:,} -> {n_test_after:,} (removed {n_test_removed:,} cells)")
     print(f"  Total removed: {n_val_removed + n_test_removed:,} cells (split set to empty)")

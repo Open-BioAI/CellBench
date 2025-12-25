@@ -1,6 +1,4 @@
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
 import numpy as np
 from scipy import stats
 from scipy.spatial.distance import jensenshannon
@@ -97,7 +95,7 @@ class FlowMatchingMetrics:
                 kl_div = stats.entropy(hist_gen, hist_target)
                 if not np.isnan(kl_div) and not np.isinf(kl_div):
                     kl_divs.append(kl_div)
-            except:
+            except Exception:
                 continue
                 
         metrics['mean_kl_divergence'] = np.mean(kl_divs) if kl_divs else float('inf')
@@ -121,7 +119,7 @@ class FlowMatchingMetrics:
                 js_div = jensenshannon(hist_gen, hist_target)
                 if not np.isnan(js_div):
                     js_divs.append(js_div)
-            except:
+            except Exception:
                 continue
                 
         metrics['mean_js_divergence'] = np.mean(js_divs) if js_divs else 1.0

@@ -1,9 +1,8 @@
 import argparse
-import inspect
 
 from . import diffusion
 from .respace import SpacedDiffusion, space_timesteps
-from .MLPModel import MLPModel, EncoderMLPModel
+from .MLPModel import MLPModel
 
 NUM_CLASSES = 4
 

@@ -1,8 +1,6 @@
-import pandas as pd
 import torch
 import torch.nn.functional as F
 import lightning as L
-import numpy as np
 
 from ..nn.mlp import MLP, MaskNet
 from .base import PerturbationModel

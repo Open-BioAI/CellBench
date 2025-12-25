@@ -1,10 +1,9 @@
 from __future__ import annotations
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import lightning as L
-import numpy as np
 from .base import PerturbationModel
 from ..nn.mix_pert_encoder import MixedPerturbationEncoder
 

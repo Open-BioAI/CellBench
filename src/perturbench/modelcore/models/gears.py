@@ -1,19 +1,15 @@
-from typing import Any
 
 import torch
-import torch.nn as nn
-from torch import optim
 from torch.optim.lr_scheduler import StepLR
-import gears
-
 from ..nn.gears_modules import GEARS_Model,loss_fct,uncertainty_loss_fct
 from .base import  PerturbationModel
 import numpy as np
-torch.manual_seed(0)
 from perturbench.data.utils import GraphBuilder
-
 import warnings
-import anndata as ad
+import networkx as nx
+import pickle
+
+torch.manual_seed(0)
 
 warnings.filterwarnings("ignore")
 
@@ -408,14 +404,6 @@ class GEARS(PerturbationModel):
             }
 
         return {"optimizer": optimizer, "lr_scheduler": lr_scheduler}
-
-
-import networkx as nx
-import pandas as pd
-import os
-import pickle
-from multiprocessing import Pool
-from tqdm import tqdm
 
 
 class GeneSimNetwork():

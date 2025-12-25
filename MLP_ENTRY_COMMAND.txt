@@ -1,0 +1,45 @@
+# ============================================
+# MLP 平台"入口命令"配置
+# ============================================
+# 任务类型：普通（非 DDP）
+# worker 数：1
+# 每个 worker GPU：1
+# 副本数/并行度：8（提交 8 份同样的任务）
+# ============================================
+
+# 方式一：使用脚本文件（推荐，更易维护）
+bash /fs-computility-new/upzd_share/maoxinjie/AIVC/mxj/perturbench-main/run_mlp_agent.sh
+
+# ============================================
+# 方式二：直接复制以下命令到"入口命令"字段
+# ============================================
+
+cd /fs-computility-new/upzd_share/maoxinjie/AIVC/mxj/perturbench-main && \
+export PYTHONPATH=/fs-computility-new/upzd_share/maoxinjie/AIVC/mxj/perturbench-main/src:$PYTHONPATH && \
+export HYDRA_FULL_ERROR=1 && \
+export WANDB_DIR=$PWD/wandb_logs/job_${MLP_ROLE_INDEX:-0} && \
+export WANDB_CACHE_DIR=$PWD/wandb_cache/job_${MLP_ROLE_INDEX:-0} && \
+export NUMBA_CACHE_DIR=$PWD/numba_cache/job_${MLP_ROLE_INDEX:-0} && \
+export TORCH_EXTENSIONS_DIR=$PWD/torch_extensions/job_${MLP_ROLE_INDEX:-0} && \
+export XDG_CACHE_HOME=$PWD/.cache/job_${MLP_ROLE_INDEX:-0} && \
+mkdir -p "$WANDB_DIR" "$WANDB_CACHE_DIR" "$NUMBA_CACHE_DIR" "$TORCH_EXTENSIONS_DIR" "$XDG_CACHE_HOME" && \
+echo "==========================================" && \
+echo "HOSTNAME=$(hostname)" && \
+echo "MLP_ROLE_INDEX=${MLP_ROLE_INDEX:-unset}" && \
+echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset}" && \
+echo "==========================================" && \
+nvidia-smi || true && \
+while true; do \
+  echo "[$(date)] Starting new wandb agent run..." && \
+  python -m wandb agent xinjiemao60-westlake-university/perturbench/47mcww58 --count 1 || { \
+    exit_code=$? && \
+    echo "[$(date)] Wandb agent exited with code $exit_code" && \
+    if [ $exit_code -eq 0 ]; then \
+      echo "[$(date)] Sweep completed. Exiting." && \
+      break; \
+    fi && \
+    echo "[$(date)] Waiting 5 seconds before retry..." && \
+    sleep 5; \
+  }; \
+done
+

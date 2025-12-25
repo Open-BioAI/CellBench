@@ -1,6 +1,6 @@
 import math
 from typing import Any, Dict, Mapping, Optional, Union
-
+import warnings
 import numpy as np
 import torch
 import torch.distributed as dist
@@ -10,14 +10,7 @@ from torch import Tensor, nn
 from torch.distributions import Bernoulli
 from torch.nn import TransformerEncoder, TransformerEncoderLayer
 from tqdm import trange
-
-try:
-    from flash_attn.flash_attention import FlashMHA
-except ImportError:
-    import warnings
-
-    warnings.warn("flash_attn is not installed")
-
+from flash_attn.flash_attention import FlashMHA
 from .dsbn import DomainSpecificBatchNorm1d
 from .grad_reverse import grad_reverse
 
@@ -227,9 +220,7 @@ class TransformerModel(nn.Module):
         try:
             self._check_batch_labels(batch_labels)
         # TODO: handle raw exception
-        except:
-            import warnings
-
+        except Exception:
             warnings.warn("batch_labels is required but not provided, using zeros instead")
             batch_labels = torch.zeros(cell_emb.shape[0], dtype=torch.long, device=cell_emb.device)
 

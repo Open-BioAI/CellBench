@@ -4,7 +4,7 @@ import torch
 import anndata
 import h5py as h5
 import numpy as np
-
+from typing import Optional
 from pathlib import Path
 from tqdm import tqdm
 from torch import nn
@@ -337,7 +337,7 @@ class Inference:
     def decode_from_adata(self, adata, genes, emb_key: str, read_depth=None, batch_size=64):
         try:
             cell_embs = adata.obsm[emb_key]
-        except:
+        except Exception:
             cell_embs = adata.X
 
         device_type = "cuda" if torch.cuda.is_available() else "cpu"

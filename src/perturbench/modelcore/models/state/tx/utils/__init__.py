@@ -1,12 +1,14 @@
 import time
 import logging
 from contextlib import contextmanager
+import torch
 from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.loggers.csv_logs import CSVLogger as BaseCSVLogger
 import csv
 import os
 from lightning.pytorch.callbacks import ModelCheckpoint
 from os.path import join
+from pathlib import Path
 
 
 class RobustCSVLogger(BaseCSVLogger):
@@ -335,7 +337,7 @@ def get_lightning_module(model_type: str, data_config: dict, model_config: dict,
             try:
                 model.model.load_state_dict(torch.load(model_file))
                 print(f"Loading all model params from {model_file}")
-            except:
+            except Exception:
                 # only load params that are in the model and match the size
                 model_dict = model.model.state_dict()
                 pretrained_dict = torch.load(model_file)

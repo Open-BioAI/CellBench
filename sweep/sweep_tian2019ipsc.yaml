@@ -1,6 +1,6 @@
 project: perturbench
-name: sciplex3_hydra_bayes
-method: bayes
+name: sciplex3_grid
+method: grid
 
 metric:
   goal: maximize
@@ -11,7 +11,7 @@ parameters:
   data:
     value: mix_pert
   data.task:
-    value: tian2019ipsc
+    value: tiankampmann2019_ipsc
   data.data_path:
     value: /fs-computility-new/upzd_share/maoxinjie/AIVC/mxj/perturbench-main/data/all_cell_line_filterdrug.h5ad
 
@@ -48,8 +48,14 @@ parameters:
   
   # sweep 项（注意：model 只能是单值 categorical，不要让它变成 list）
   model:
-    values: [biolord, cpa, genepert, sclambda, squidiff, decoder_only, gears, latent_additive, linear_additive, prnet, sams_vae, state]
+    values: [biolord, cpa, genepert, sclambda, squidiff, decoder_only, gears, latent_additive, linear_additive, prnet, sams_vae, state_sm]
+  
 
+  logger:
+    value: wandb
+  logger.wandb.project:
+    value: perturbench
+  # logger.wandb.name 会自动根据 model 名称生成，格式：{model}_lr{lr}
   # model.dropout:
   #   distribution: uniform
   #   min: 0.0

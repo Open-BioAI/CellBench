@@ -29,19 +29,16 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 
-from typing import Dict, Any
 import lightning as L
 import torch
-from abc import ABC, abstractmethod
+from abc import ABC
 import pandas as pd
 import numpy as np
 import anndata as ad
-from omegaconf import DictConfig
 import os
 import gc
-from perturbench.data.types import Batch
-from ...analysis.benchmarks.evaluation import Evaluation, merge_evals
-import numpy as np
+from hydra.core.hydra_config import HydraConfig
+from ...analysis.benchmarks.evaluation import Evaluation
 from lightning_utilities.core.apply_func import apply_to_collection
 
 class Batch:
@@ -367,7 +364,7 @@ class PerturbationModel(L.LightningModule, ABC):
             # ---- Build AnnData objects ----
             gene_names=self.gene_names
             if hasattr(self,'infer_gene_ids'):
-                print(f"[Rank 0] Use infer gene ids")
+                print("[Rank 0] Use infer gene ids")
                 sys.stdout.flush()
                 gene_names=gene_names[self.infer_gene_ids]
 
@@ -422,7 +419,7 @@ class PerturbationModel(L.LightningModule, ABC):
                         print(f"[Rank 0] Using masked genes for evaluation: {len(eval_features)} / {len(gene_names)} genes")
                         sys.stdout.flush()
                     else:
-                        print(f"[Rank 0] Warning: use_masked_genes=True but train_dataset has no pert_expression_mask. Using all genes.")
+                        print("[Rank 0] Warning: use_masked_genes=True but train_dataset has no pert_expression_mask. Using all genes.")
                         sys.stdout.flush()
                 except Exception as e:
                     print(f"[Rank 0] Warning: Failed to construct gene mask: {e}. Using all genes.")
@@ -472,9 +469,8 @@ class PerturbationModel(L.LightningModule, ABC):
             # Get output directory (contains timestamp from hydra)
             # Try to get from hydra runtime, fallback to logger save_dir or evaluation_config.save_dir
             try:
-                from hydra.core.hydra_config import HydraConfig
                 output_dir = HydraConfig.get().runtime.output_dir
-            except:
+            except Exception:
                 # Fallback: try to get from logger
                 if self.logger is not None:
                     # Handle both single logger and list of loggers
@@ -512,24 +508,40 @@ class PerturbationModel(L.LightningModule, ABC):
             else:
                 pred_h5ad_path = os.path.join(summary_dir, "predictions.h5ad")
                 ref_h5ad_path = os.path.join(summary_dir, "reference.h5ad")
+            # Track whether files were saved successfully
+            files_saved = False
             try:
                 predicted_adata.write(pred_h5ad_path)
                 reference_adata.write(ref_h5ad_path)
+                files_saved = True
                 print(f"[Rank 0] Prediction files saved to: {summary_dir}")
                 print(f"[Rank 0]   - predictions.h5ad: {pred_h5ad_path}")
                 print(f"[Rank 0]   - reference.h5ad: {ref_h5ad_path}")
                 sys.stdout.flush()
+            except OSError as e:
+                # Handle disk quota exceeded and other disk-related errors gracefully
+                if e.errno == 122:  # Disk quota exceeded
+                    print("[Rank 0] WARNING: Disk quota exceeded. Skipping prediction file save.")
+                    print("[Rank 0]   Metrics are still saved to CSV and logged to wandb.")
+                    print("[Rank 0]   File size would be ~{predicted_adata.X.nbytes / 1024**3:.2f} GB")
+                    print("[Rank 0]   To save predictions, free up disk space or use a different output directory.")
+                else:
+                    print("[Rank 0] WARNING: Failed to save prediction files (OSError {e.errno}): {e}")
+                    print("[Rank 0]   Metrics are still saved to CSV and logged to wandb.")
+                sys.stdout.flush()
             except Exception as e:
-                print(f"[Rank 0] Error: Failed to save prediction files: {e}")
-                import traceback
-                traceback.print_exc()
+                print(f"[Rank 0] WARNING: Failed to save prediction files: {e}")
+                print("[Rank 0]   Metrics are still saved to CSV and logged to wandb.")
                 sys.stdout.flush()
 
             print(f"[Rank 0] Evaluation finished. Results saved to {csv_path}")
-            print(f"[Rank 0] Summary files also saved to {summary_dir}")
-            print(f"[Rank 0] Test predictions and reference saved to:")
-            print(f"[Rank 0]   - Predictions: {pred_h5ad_path}")
-            print(f"[Rank 0]   - Reference: {ref_h5ad_path}")
+            if files_saved:
+                print(f"[Rank 0] Summary files also saved to {summary_dir}")
+                print("[Rank 0] Test predictions and reference saved to:")
+                print(f"[Rank 0]   - Predictions: {pred_h5ad_path}")
+                print(f"[Rank 0]   - Reference: {ref_h5ad_path}")
+            else:
+                print("[Rank 0] WARNING: Prediction files were not saved due to disk space issues.")
             print(f"[Rank 0]   - Summary metrics: {summary_csv_path}")
             sys.stdout.flush()
 
@@ -548,19 +560,10 @@ class PerturbationModel(L.LightningModule, ABC):
                                 for metric_name, value in summary_metrics_dict.items():
                                     test_metrics_dict[f"test_{metric_name}"] = float(value)
                                 
-                                # Log metrics to wandb
+                                # Log metrics to wandb (only metrics, no artifacts to avoid upload delays)
                                 logger.experiment.log(test_metrics_dict)
                                 print(f"[Rank 0] Test metrics logged to wandb: {list(test_metrics_dict.keys())}")
-                                
-                                # Save predictions to wandb as artifacts
-                                if os.path.exists(pred_h5ad_path) and os.path.exists(ref_h5ad_path):
-                                    import wandb
-                                    artifact = wandb.Artifact("test_predictions", type="predictions")
-                                    artifact.add_file(pred_h5ad_path, name="predictions.h5ad")
-                                    artifact.add_file(ref_h5ad_path, name="reference.h5ad")
-                                    artifact.add_file(summary_csv_path, name="summary_metrics.csv")
-                                    logger.experiment.log_artifact(artifact)
-                                    print(f"[Rank 0] Predictions saved to wandb artifact: test_predictions")
+                                # Note: Artifact upload removed to prevent hanging. Files are still saved locally.
                                 sys.stdout.flush()
                             except Exception as e:
                                 print(f"[Rank 0] Warning: Failed to log to wandb (files are still saved locally): {e}")
@@ -575,7 +578,8 @@ class PerturbationModel(L.LightningModule, ABC):
             obj_list=[summary_metrics]
             dist.broadcast_object_list(obj_list,src=0)
             self.summary_metrics=obj_list[0]
-        else:self.summary_metrics = summary_metrics
+        else:
+            self.summary_metrics = summary_metrics
 
         # ---- Synchronize and cleanup ----
         if is_distributed:

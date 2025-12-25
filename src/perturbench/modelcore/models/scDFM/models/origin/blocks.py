@@ -1,8 +1,6 @@
-import pdb
 import torch
 import torch.nn as nn
-from torch import Tensor
-from typing import Optional, Dict, Tuple
+from typing import Optional, Tuple
 import math
 from .rotary import apply_rotary_emb
 
@@ -106,7 +104,7 @@ class MultiheadDiffAttn_Origin(nn.Module):
         q = apply_rotary_emb(q, *rel_pos, interleaved=True)
         k = apply_rotary_emb(k, *rel_pos, interleaved=True)
 
-        offset = src_len - tgt_len
+        src_len - tgt_len
         q = q.transpose(1, 2)
         k = repeat_kv(k.transpose(1, 2), self.n_rep)
         v = repeat_kv(v.transpose(1, 2), self.n_rep)

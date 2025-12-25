@@ -1,11 +1,9 @@
 import torch
 import torch.nn.functional as F
 import lightning as L
-import numpy as np
 
 from ..nn.mlp import MLP
 from .base import PerturbationModel
-from perturbench.data.types import Batch
 from ..nn import MixedPerturbationEncoder
 
 

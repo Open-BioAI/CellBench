@@ -162,7 +162,7 @@ def main():
         n_val_after = n_val_before - n_val_removed
         n_test_after = n_test_before - n_test_removed
         
-        print(f"\nFiltering results:")
+        print("\nFiltering results:")
         print(f"  val:  {n_val_before:,} -> {n_val_after:,} (removed {n_val_removed:,} cells)")
         print(f"  test: {n_test_before:,} -> {n_test_after:,} (removed {n_test_removed:,} cells)")
         print(f"  Total removed: {n_val_removed + n_test_removed:,} cells (split set to empty)")

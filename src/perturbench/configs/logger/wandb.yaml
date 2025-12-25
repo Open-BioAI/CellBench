@@ -21,5 +21,16 @@ wandb:
     sync_tensorboard: true
     # 设置同步间隔，确保实时上传
     _sync_period: 10
+    # 增加初始化超时时间（默认 90 秒，增加到 300 秒）
+    init_timeout: 300
+    # 使用线程模式启动，避免阻塞
+    _start_method: thread
+    # 增加重试次数和超时设置
+    _network_timeout: 60
+    _console: off
+    # 错误容忍度：允许 API 错误，不中断训练
+    _disable_service: false
+    # 设置重试次数
+    _retry_timeout: 30
 
 

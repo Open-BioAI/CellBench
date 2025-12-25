@@ -14,7 +14,6 @@ from ..nn.decoders import (
 )
 from ..nn.mlp import MLP
 from ..nn import MixedPerturbationEncoder
-from perturbench.data.types import Batch
 
 from .base import PerturbationModel
 

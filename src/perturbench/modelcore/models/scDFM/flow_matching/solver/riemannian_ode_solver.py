@@ -175,10 +175,12 @@ def _euler_step(
     Returns:
         Tensor: tensor containing the state after the step
     """
-    velocity_fn = lambda x, t: (
-        manifold.proju(x, velocity_model(x, t)) if proju else velocity_model(x, t)
-    )
-    projx_fn = lambda x: manifold.projx(x) if projx else x
+    def velocity_fn(x, t):
+        return (
+            manifold.proju(x, velocity_model(x, t)) if proju else velocity_model(x, t)
+        )
+    def projx_fn(x):
+        return manifold.projx(x) if projx else x
 
     vt = velocity_fn(xt, t0)
 
@@ -210,10 +212,12 @@ def _midpoint_step(
     Returns:
         Tensor: tensor containing the state after the step
     """
-    velocity_fn = lambda x, t: (
-        manifold.proju(x, velocity_model(x, t)) if proju else velocity_model(x, t)
-    )
-    projx_fn = lambda x: manifold.projx(x) if projx else x
+    def velocity_fn(x, t):
+        return (
+            manifold.proju(x, velocity_model(x, t)) if proju else velocity_model(x, t)
+        )
+    def projx_fn(x):
+        return manifold.projx(x) if projx else x
 
     half_dt = 0.5 * dt
     vt = velocity_fn(xt, t0)
@@ -248,10 +252,12 @@ def _rk4_step(
     Returns:
         Tensor: tensor containing the state after the step
     """
-    velocity_fn = lambda x, t: (
-        manifold.proju(x, velocity_model(x, t)) if proju else velocity_model(x, t)
-    )
-    projx_fn = lambda x: manifold.projx(x) if projx else x
+    def velocity_fn(x, t):
+        return (
+            manifold.proju(x, velocity_model(x, t)) if proju else velocity_model(x, t)
+        )
+    def projx_fn(x):
+        return manifold.projx(x) if projx else x
 
     k1 = velocity_fn(xt, t0)
     k2 = velocity_fn(projx_fn(xt + dt * k1 / 3), t0 + dt / 3)

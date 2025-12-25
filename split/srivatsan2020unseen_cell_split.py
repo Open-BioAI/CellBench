@@ -99,7 +99,7 @@ def create_unseen_cell_split(
     splits = np.array([""] * adata.n_obs, dtype=object)
 
     # 仅在目标 dataset 子集内赋值 split
-    ds_idx = np.where(mask_ds.values)[0]
+    _ds_idx = np.where(mask_ds.values)[0]
 
     # 3) MCF7 & A549 -> train（仅限目标 dataset）
     mask_mcf7 = mask_ds & (clusters == "MCF7")

@@ -2,12 +2,14 @@
 import logging
 import argparse
 import sys
-from typing import List
+import os
+import glob
+from typing import List, Optional
 
 import hydra
-
+from lightning.pytorch.loggers import WandbLogger
 import lightning as L
-from omegaconf import DictConfig, OmegaConf, open_dict
+from omegaconf import DictConfig, OmegaConf
 from lightning.pytorch.loggers import Logger
 from perturbench.modelcore.utils import multi_instantiate
 from hydra.core.hydra_config import HydraConfig
@@ -58,6 +60,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--trainer.min_epochs", dest="trainer_min_epochs", type=int)
     # devices is usually a Hydra list, keep it as string so Hydra can parse it
     parser.add_argument("--trainer.devices", dest="trainer_devices", type=str)
+    parser.add_argument("--trainer.strategy", dest="trainer_strategy", type=str)
+    parser.add_argument("--trainer.accelerator", dest="trainer_accelerator", type=str)
 
     parser.add_argument("--data.val_batch_size", dest="data_val_batch_size", type=int)
     parser.add_argument(
@@ -121,6 +125,8 @@ def _apply_cli_overrides(cfg: DictConfig, args: argparse.Namespace | None) -> Di
         "trainer_log_every_n_steps": "trainer.log_every_n_steps",
         "trainer_max_epochs": "trainer.max_epochs",
         "trainer_min_epochs": "trainer.min_epochs",
+        "trainer_strategy": "trainer.strategy",
+        "trainer_accelerator": "trainer.accelerator",
         # "trainer_devices" is translated to a Hydra override in __main__
         "data_val_batch_size": "data.val_batch_size",
         "data_test_batch_size": "data.test_batch_size",
@@ -159,6 +165,58 @@ def _apply_cli_overrides(cfg: DictConfig, args: argparse.Namespace | None) -> Di
     return cfg
 
 
+def find_latest_checkpoint(output_dir: str) -> Optional[str]:
+    """
+    查找最新的 checkpoint 文件，用于自动恢复训练。
+    
+    查找顺序：
+    1. 先查找 last.ckpt（如果存在）
+    2. 然后查找 checkpoints/loss/ 和 checkpoints/pcc/ 下最新的 checkpoint
+    3. 返回最新的 checkpoint 路径
+    
+    Args:
+        output_dir: Hydra 输出目录（包含 checkpoints 子目录）
+        
+    Returns:
+        最新的 checkpoint 路径，如果不存在则返回 None
+    """
+    if not output_dir or not os.path.exists(output_dir):
+        return None
+    
+    checkpoints = []
+    
+    # 1. 查找 last.ckpt（最优先）
+    last_ckpt = os.path.join(output_dir, "last.ckpt")
+    if os.path.exists(last_ckpt):
+        log.info(f"Found last.ckpt: {last_ckpt}")
+        return last_ckpt
+    
+    # 2. 查找 checkpoints/loss/ 下的所有 checkpoint
+    loss_ckpt_dir = os.path.join(output_dir, "checkpoints", "loss")
+    if os.path.exists(loss_ckpt_dir):
+        loss_ckpts = glob.glob(os.path.join(loss_ckpt_dir, "*.ckpt"))
+        checkpoints.extend(loss_ckpts)
+    
+    # 3. 查找 checkpoints/pcc/ 下的所有 checkpoint
+    pcc_ckpt_dir = os.path.join(output_dir, "checkpoints", "pcc")
+    if os.path.exists(pcc_ckpt_dir):
+        pcc_ckpts = glob.glob(os.path.join(pcc_ckpt_dir, "*.ckpt"))
+        checkpoints.extend(pcc_ckpts)
+    
+    # 4. 查找其他可能的 checkpoint 位置
+    for pattern in ["*.ckpt", "checkpoints/**/*.ckpt"]:
+        found = glob.glob(os.path.join(output_dir, pattern), recursive=True)
+        checkpoints.extend(found)
+    
+    if not checkpoints:
+        return None
+    
+    # 按修改时间排序，返回最新的
+    latest_ckpt = max(checkpoints, key=os.path.getmtime)
+    log.info(f"Found latest checkpoint: {latest_ckpt} (modified: {os.path.getmtime(latest_ckpt)})")
+    return latest_ckpt
+
+
 def train(runtime_context: dict):
 
     cfg = runtime_context["cfg"]
@@ -178,17 +236,187 @@ def train(runtime_context: dict):
     log.info("Instantiating callbacks...")
     callbacks: List[L.Callback] = multi_instantiate(cfg.get("callbacks"))
 
-    log.info("Instantiating loggers...")
-    loggers: List[Logger] = multi_instantiate(cfg.get("logger"))
+    # 在创建 loggers 之前，先提取 model 名称并修改配置
+    # 这样 WandbLogger 初始化时就能使用正确的 name
+    
+    # 从 cfg 中推断 model 名称（从 _target_ 提取）
+    model_name = "unknown"
+    model_target = cfg.get("model", {}).get("_target_", "")
+    if model_target:
+        # 例如 "perturbench.modelcore.models.gears.GEARS" -> "gears"
+        # 例如 "perturbench.modelcore.models.BiolordStar" -> "biolord"
+        parts = model_target.split(".")
+        for i, part in enumerate(parts):
+            if part == "models" and i + 1 < len(parts):
+                # 提取模型名，去掉可能的类名后缀（如 Star, Model, Net 等）
+                raw_name = parts[i + 1]
+                # 转换为小写，并去掉常见的类名后缀
+                model_name = raw_name.lower()
+                # 去掉常见后缀
+                for suffix in ["star", "model", "net", "module", "class"]:
+                    if model_name.endswith(suffix) and len(model_name) > len(suffix):
+                        model_name = model_name[:-len(suffix)]
+                        break
+                break
+        if model_name == "unknown":
+            # 回退：取最后一个部分并转小写，去掉后缀
+            raw_name = parts[-1].lower() if parts else "unknown"
+            if raw_name != "unknown":
+                model_name = raw_name
+                for suffix in ["star", "model", "net", "module", "class"]:
+                    if model_name.endswith(suffix) and len(model_name) > len(suffix):
+                        model_name = model_name[:-len(suffix)]
+                        break
+    
+    # 如果还是没找到，尝试从 Hydra overrides 中获取（安全方式）
+    if model_name == "unknown":
+        try:
+            hydra_cfg = HydraConfig.get()
+            # 尝试不同的路径来获取 overrides
+            overrides = None
+            if hasattr(hydra_cfg.job, "overrides"):
+                if hasattr(hydra_cfg.job.overrides, "task"):
+                    overrides = hydra_cfg.job.overrides.task
+                elif isinstance(hydra_cfg.job.overrides, list):
+                    overrides = hydra_cfg.job.overrides
+            
+            if overrides:
+                for override in overrides:
+                    if isinstance(override, str) and override.startswith("model="):
+                        model_name = override.split("=", 1)[1]
+                        break
+        except Exception:
+            # 如果获取 overrides 失败，忽略，使用默认的 "unknown"
+            pass
+    
+    # 如果 logger.wandb.name 是默认的 "gears" 或未设置，在创建前修改配置
+    try:
+        OmegaConf.set_struct(cfg, False)
+        if cfg.get("logger") and hasattr(cfg.logger, "wandb"):
+            current_name = cfg.logger.wandb.get("name", None)
+            if current_name is None or current_name == "gears":
+                # 生成包含模型名和学习率的 run name
+                lr = cfg.get("model", {}).get("lr", "unknown")
+                # 格式化学习率（避免科学计数法）
+                if isinstance(lr, float):
+                    lr_str = f"{lr:.0e}" if lr < 0.01 else f"{lr}"
+                else:
+                    lr_str = str(lr)
+                auto_name = f"{model_name}_lr{lr_str}"
+                
+                # 修改配置（在 logger 创建之前）
+                OmegaConf.update(cfg, "logger.wandb.name", auto_name, merge=False)
+                log.info("Auto-generated wandb run name: %s (model: %s, lr: %s)", auto_name, model_name, lr_str)
+    except Exception as e:
+        log.warning("Failed to update logger.wandb.name in config: %s", e)
 
-    log.info("Instantiating trainer <%s>", cfg.trainer._target_)
+    log.info("Instantiating loggers...")
+    # 尝试实例化 loggers，如果 wandb 初始化失败，继续使用其他 loggers
+    try:
+        loggers: List[Logger] = multi_instantiate(cfg.get("logger"))
+    except Exception as e:
+        log.warning("Failed to instantiate some loggers: %s. Continuing with available loggers.", e)
+        # 如果所有 loggers 都失败，尝试只实例化非 wandb loggers
+        logger_cfg = cfg.get("logger", {})
+        if logger_cfg:
+            loggers = []
+            for logger_name, logger_conf in logger_cfg.items():
+                try:
+                    if isinstance(logger_conf, DictConfig) and "_target_" in logger_conf:
+                        target = logger_conf.get("_target_", "")
+                        # 如果 wandb 失败，跳过它，继续使用其他 loggers
+                        if "wandb" in target.lower():
+                            log.warning("Skipping wandb logger due to initialization error. Continuing with other loggers.")
+                            continue
+                        loggers.append(hydra.utils.instantiate(logger_conf, _recursive_=False))
+                except Exception as logger_e:
+                    log.warning("Failed to instantiate logger %s: %s", logger_name, logger_e)
+            if not loggers:
+                log.error("All loggers failed to initialize. Training may continue without logging.")
+                loggers = []
+        else:
+            loggers = []
+
+    # 双重保险：如果 logger 已经创建但 name 还是 gears，再次设置
+    for logger in loggers:
+        if isinstance(logger, WandbLogger):
+            current_name = getattr(logger, "name", None) or getattr(logger, "_name", None)
+            if current_name == "gears":
+                # 重新生成 name
+                lr = cfg.get("model", {}).get("lr", "unknown")
+                if isinstance(lr, float):
+                    lr_str = f"{lr:.0e}" if lr < 0.01 else f"{lr}"
+                else:
+                    lr_str = str(lr)
+                auto_name = f"{model_name}_lr{lr_str}"
+                
+                # 尝试多种方式设置 name
+                try:
+                    logger.name = auto_name
+                except Exception:
+                    pass
+                try:
+                    if hasattr(logger, "experiment") and logger.experiment:
+                        logger.experiment.name = auto_name
+                except Exception:
+                    pass
+                
+                log.info("Updated wandb run name to: %s", auto_name)
+    
+    # Auto-adjust trainer config for single GPU: disable DDP and use FP32 precision
+    # This fixes the "No inf checks were recorded" error when using AMP with DDP on single GPU
+    trainer_cfg = cfg.get("trainer", {})
+    devices = trainer_cfg.get("devices", None)
+    
+    # Check if devices is 1 (single GPU)
+    if devices is not None:
+        if isinstance(devices, (list, tuple)):
+            num_devices = len(devices)
+        elif isinstance(devices, (int, str)):
+            try:
+                num_devices = int(devices)
+            except (ValueError, TypeError):
+                num_devices = 1
+        else:
+            num_devices = 1
+        
+        if num_devices == 1:
+            # Single GPU: disable DDP strategy and use FP32 to avoid AMP issues
+            strategy = trainer_cfg.get("strategy", None)
+            if strategy and "ddp" in str(strategy).lower():
+                log.warning("Single GPU detected (devices=1). Disabling DDP strategy to avoid compatibility issues.")
+                OmegaConf.update(cfg, "trainer.strategy", "auto", merge=False)
+            
+            # Also disable mixed precision for single GPU to avoid AMP scaler issues
+            precision = trainer_cfg.get("precision", None)
+            if precision == 16 or precision == "16" or precision == "16-mixed":
+                log.warning("Single GPU detected (devices=1). Disabling mixed precision (FP16) to avoid AMP scaler issues.")
+                OmegaConf.update(cfg, "trainer.precision", 32, merge=False)
+    
     trainer: L.Trainer = hydra.utils.instantiate(
         cfg.trainer, callbacks=callbacks, logger=loggers
     )
 
     if cfg.get("train"):
+        # 自动检测并恢复 checkpoint（如果存在且未手动指定 ckpt_path）
+        ckpt_path = cfg.get("ckpt_path")
+        if ckpt_path is None:
+            # 尝试自动查找最新的 checkpoint
+            output_dir = cfg.get("paths", {}).get("output_dir", None)
+            if output_dir:
+                auto_ckpt = find_latest_checkpoint(output_dir)
+                if auto_ckpt:
+                    ckpt_path = auto_ckpt
+                    log.info(f"Auto-resuming from checkpoint: {ckpt_path}")
+                else:
+                    log.info("No checkpoint found. Starting fresh training.")
+            else:
+                log.info("output_dir not found in config. Starting fresh training.")
+        else:
+            log.info(f"Using manually specified checkpoint: {ckpt_path}")
+        
         log.info("Starting training!")
-        trainer.fit(model=model, datamodule=datamodule, ckpt_path=cfg.get("ckpt_path"))
+        trainer.fit(model=model, datamodule=datamodule, ckpt_path=ckpt_path)
 
     train_metrics = trainer.callback_metrics
 
@@ -270,20 +498,41 @@ def main(cfg: DictConfig) -> float | None:
 
     # CLI parser args have highest priority: use them to override Hydra cfg
     cfg = _apply_cli_overrides(cfg, _PARSER_ARGS)
+    
+    # 设置 TMPDIR 到日志目录所在的文件系统，避免跨设备移动 checkpoint 时出错
+    # 这样可以确保临时文件创建在与 checkpoint 相同的文件系统上
+    import os
+    log_dir = cfg.get("paths", {}).get("log_dir", None)
+    if log_dir:
+        # 确保 log_dir 存在
+        os.makedirs(log_dir, exist_ok=True)
+        # 在 log_dir 下创建临时目录
+        tmp_dir = os.path.join(log_dir, ".tmp")
+        os.makedirs(tmp_dir, exist_ok=True)
+        # 设置 TMPDIR 环境变量（仅对当前进程有效）
+        os.environ["TMPDIR"] = tmp_dir
+        log.info(f"Set TMPDIR to {tmp_dir} to avoid cross-device checkpoint save errors")
 
     runtime_context = {"cfg": cfg, "trial_number": HydraConfig.get().job.get("num")}
 
+    try:
     # Train the model
-    global metric_dict
-    metric_dict = train(runtime_context)
+        global metric_dict
+        metric_dict = train(runtime_context)
 
-    # Combined metric
-    metrics_use = cfg.get("metrics_to_optimize")
-    if metrics_use:
-        combined_metric = sum(
-            [metric_dict.get(metric) * weight for metric, weight in metrics_use.items()]
-        )
-        return combined_metric
+        # Combined metric
+        metrics_use = cfg.get("metrics_to_optimize")
+        if metrics_use:
+            combined_metric = sum(
+                [metric_dict.get(metric) * weight for metric, weight in metrics_use.items()]
+            )
+            return combined_metric
+    except Exception as e:
+        # 捕获所有异常，记录错误信息，然后重新抛出
+        # 这样 wandb agent 可以记录失败并继续下一个 run
+        log.error("Training failed with exception: %s", e, exc_info=True)
+        # 重新抛出异常，让 wandb agent 知道这个 run 失败了
+        raise
 
 
 if __name__ == "__main__":

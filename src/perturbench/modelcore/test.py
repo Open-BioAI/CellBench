@@ -1,4 +1,3 @@
 import numpy as np
-import torch
 a=np.array([1,2,3,4,5,6,7,8,9,0,11,12,13,14,15])==1
 print(a.argmax())

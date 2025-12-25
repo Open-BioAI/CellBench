@@ -365,7 +365,7 @@ class PseudobulkPerturbationModel(PerturbationModel):
             "ctrl_cell_emb": batch.get("ctrl_cell_emb", None),
         }
 
-        basal_hvg = batch.get("ctrl_cell_counts", None)
+        batch.get("ctrl_cell_counts", None)
 
         if self.gene_decoder is not None:
             if latent_output.dim() == 2:

@@ -1,5 +1,6 @@
 import sys
-
+# Your existing exports
+from .inference import Inference
 
 # Set up VCI module aliases for backward compatibility
 def _setup_vci_aliases():
@@ -52,8 +53,5 @@ def _setup_vci_aliases():
 
 # Set up the aliases when this module is imported
 _setup_vci_aliases()
-
-# Your existing exports
-from .inference import Inference
 
 __all__ = ["Inference"]

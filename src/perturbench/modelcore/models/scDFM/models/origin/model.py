@@ -1,19 +1,13 @@
 import torch
 import torch.nn as nn
-from torch import Tensor
-from typing import Optional, Dict
-import math
-from timm.models.vision_transformer import PatchEmbed, Attention, Mlp
+from timm.models.vision_transformer import Attention, Mlp
 
-import pdb
 
 from .layers import GeneadaLN, ContinuousValueEncoder, GeneEncoder, BatchLabelEncoder, TimestepEmbedder, ExprDecoder
-from .blocks import MultiheadDiffAttn, modulate , CrossAttentionTransformerLayer
+from .blocks import MultiheadDiffAttn, modulate
 from ....base import PerturbationModel
 
 
-import torch
-import torch.nn.functional as F
 from geomloss import SamplesLoss
 
 def mmd_loss_geomloss(X, Y, scales=(0.5, 1.0, 2.0, 4.0), eps=1e-8):
@@ -22,7 +16,7 @@ def mmd_loss_geomloss(X, Y, scales=(0.5, 1.0, 2.0, 4.0), eps=1e-8):
     implemented using geomloss>=2.0
     """
     assert X.dim() == 2 and Y.dim() == 2, "X, Y should be (B, D)"
-    m, n = X.size(0), Y.size(0)
+    m, _n = X.size(0), Y.size(0)
 
     # === compute median heuristic ===
     with torch.no_grad():
@@ -58,7 +52,8 @@ class Block(nn.Module):
         self.attn = Attention(hidden_size, num_heads=num_heads, qkv_bias=True, **block_kwargs)
         self.norm2 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         mlp_hidden_dim = int(hidden_size * mlp_ratio)
-        approx_gelu = lambda: nn.GELU(approximate="tanh")
+        def approx_gelu():
+            return nn.GELU(approximate="tanh")
         self.mlp = Mlp(in_features=hidden_size, hidden_features=mlp_hidden_dim, act_layer=approx_gelu, drop=0)
         self.adaLN_modulation = nn.Sequential(
             nn.SiLU(),
@@ -78,7 +73,8 @@ class DifferentialTransformerBlock(nn.Module):
         self.attn = MultiheadDiffAttn(hidden_size, num_heads, depth, cross=cross)
         self.norm2 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         mlp_hidden_dim = int(hidden_size * mlp_ratio)
-        approx_gelu = lambda: nn.GELU(approximate="tanh")
+        def approx_gelu():
+            return nn.GELU(approximate="tanh")
         self.mlp = Mlp(in_features=hidden_size, hidden_features=mlp_hidden_dim, act_layer=approx_gelu, drop=0)
         self.adaLN_modulation = nn.Sequential(
             nn.SiLU(),

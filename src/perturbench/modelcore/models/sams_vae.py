@@ -2,9 +2,7 @@ from typing import Tuple
 import torch
 import torch.distributions as dist
 import lightning as L
-import numpy as np
 
-from perturbench.data.types import Batch
 from ..nn.vae import BaseEncoder
 from ..nn.mlp import gumbel_softmax_bernoulli
 from .base import PerturbationModel

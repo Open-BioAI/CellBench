@@ -1,7 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from torch.nn import Sequential, Linear, ReLU
 from torch_geometric.nn import SGConv
 import numpy as np
 
@@ -27,7 +25,7 @@ class MLP(torch.nn.Module):
                 torch.nn.ReLU()
             ]
 
-        layers = [l for l in layers if l is not None][:-1]
+        layers = [j for j in layers if j is not None][:-1]
         self.activation = last_layer_act
         self.network = torch.nn.Sequential(*layers)
         self.relu = torch.nn.ReLU()

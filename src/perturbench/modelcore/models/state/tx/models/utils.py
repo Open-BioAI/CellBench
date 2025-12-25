@@ -349,7 +349,7 @@ class GPT2BidirectionalModel(GPT2Model):
 
         if seq_len is not None:
             # Print the (1, 1, seq_len, seq_len) slice of the bias for the first block
-            bias_mask = self.h[0].attn.bias[0, 0, :seq_len, :seq_len]
+            self.h[0].attn.bias[0, 0, :seq_len, :seq_len]
         #     print("Bias mask (block 0) slice [0,0,:seq_len,:seq_len]:")
         #     print(bias_mask)
         # else:
@@ -362,7 +362,7 @@ class GPT2BidirectionalModel(GPT2Model):
             expanded = attention_mask.unsqueeze(1).unsqueeze(2).expand(B, 1, S, S)
             # Convert to float mask (1→0.0, 0→-inf) just like GPT2 does internally
             neg_inf = torch.finfo(self.dtype).min
-            float_mask = (1.0 - expanded.to(self.dtype)) * neg_inf
+            (1.0 - expanded.to(self.dtype)) * neg_inf
             # print(f"Expanded attention_mask (shape {expanded.shape}) → float mask:")
             # print(float_mask)
 

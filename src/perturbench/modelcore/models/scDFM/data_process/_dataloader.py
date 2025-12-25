@@ -155,7 +155,7 @@ class ValidationSampler(BaseValidSampler):
         -------
         Dictionary with source, condition, and target data from the validation data.
         """
-        import pdb; pdb.set_trace()
+        pdb.set_trace()
         size = self.n_conditions_on_log_iteration if mode == "on_log_iteration" else self.n_conditions_on_train_end
         condition_idcs = self.rng.choice(self._data.n_perturbations, size=(size,), replace=False)
 

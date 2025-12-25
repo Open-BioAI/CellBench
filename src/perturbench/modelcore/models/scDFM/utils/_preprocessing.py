@@ -22,12 +22,12 @@ def get_smiles_pubchemlite(cid):
     label = soup.find(text="SMILES")
     try:
         return label.find_next().text.strip()
-    except:
+    except Exception:
         return None
     
 
 def get_smiles_via_http(cid):
-    url = f"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
+    url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
     params = {
         'db': 'pccompound',
         'id': cid,
@@ -95,7 +95,6 @@ def annotate_compounds(
         raise ValueError("The number of `compound_keys` must match the number of values in `obs_key_prefixes`.")
 
     # Annotate compounds in each query column
-    not_found = set()
     c_meta = pt.metadata.Compound()
     for query_key, prefix in zip(compound_keys, obs_key_prefixes, strict=False):
         adata.obs[query_key] = adata.obs[query_key].replace(control_category, np.nan)

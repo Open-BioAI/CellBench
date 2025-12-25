@@ -1,7 +1,5 @@
 import warnings
 
-warnings.filterwarnings("ignore")
-
 import math
 import logging
 import torch.nn.functional as F
@@ -30,7 +28,7 @@ from .loss import WassersteinLoss, KLDivergenceLoss, MMDLoss, TabularLoss
 from .flash_transformer import FlashTransformerEncoderLayer
 from .flash_transformer import FlashTransformerEncoder
 
-
+warnings.filterwarnings("ignore")
 class SkipBlock(nn.Module):
     def __init__(self, in_features):
         """

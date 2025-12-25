@@ -19,7 +19,6 @@ Key differences from original:
 """
 
 import torch
-from torch.optim import Adam
 from torch.optim.lr_scheduler import StepLR
 import lightning as L
 import numpy as np

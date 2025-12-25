@@ -1,7 +1,6 @@
 import logging
 from typing import Dict, Optional
 
-import anndata as ad
 import numpy as np
 import pandas as pd
 import torch
@@ -14,7 +13,6 @@ from typing import Tuple
 
 from ....base import PerturbationModel
 from .....nn import MixedPerturbationEncoder
-from .decoders import FinetuneVCICountsDecoder
 from .decoders_nb import NBDecoder, nb_nll
 from .utils import build_mlp, get_activation_class, get_transformer_backbone, apply_lora
 from .base import LatentToGeneDecoder

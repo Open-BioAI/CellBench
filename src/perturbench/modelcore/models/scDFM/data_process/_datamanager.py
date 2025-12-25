@@ -14,7 +14,6 @@ from tqdm import tqdm
 from ..utils._logging import logger
 from ..utils._types import ArrayLike
 from ._data import ConditionData, PredictionData, ReturnData, TrainingData, ValidationData
-import pdb
 from ..utils._utils import _flatten_list, _to_list
 
 __all__ = ["DataManager"]
@@ -481,7 +480,7 @@ class DataManager:
         if one_hot:
             one_hots = []
             for idx in drug_ids:
-                vec = jnp.zeros((num_drugs,), dtype=jnp.float32).at[idx].set(1.0)
+                vec = jnp.zeros((len(self.drug_dict),), dtype=jnp.float32).at[idx].set(1.0)
                 one_hots.append(vec)
             condition_id_emb = jnp.concatenate(one_hots, axis=-1)
         else:

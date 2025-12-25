@@ -48,7 +48,6 @@ class FlashTransformerEncoderLayer(nn.Module):
         """
         # For this simple implementation, we'll use either one of the masks.
         # You can combine them as needed.
-        mask = src_key_padding_mask if src_key_padding_mask is not None else src_mask
 
         # ----- Self-Attention Block -----
         residual = src

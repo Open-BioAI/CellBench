@@ -42,7 +42,7 @@ class FlowConfig:
             self.n_top_genes = 5054
         if self.data_name == 'norman':
             self.n_top_genes = 5000
-        path = self.make_path()
+        self.make_path()
 
     def make_path(self):
         exp_name = '-'.join(['flow', 

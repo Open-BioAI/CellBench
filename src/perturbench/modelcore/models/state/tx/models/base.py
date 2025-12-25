@@ -195,7 +195,7 @@ class PerturbationModel(ABC, LightningModule):
 
     def _build_decoder(self):
         """Create self.gene_decoder from self.decoder_cfg (or leave None)."""
-        if self.gene_decoder_bool == False:
+        if not self.gene_decoder_bool:
             self.gene_decoder = None
             return
         if self.decoder_cfg is None:
@@ -214,7 +214,7 @@ class PerturbationModel(ABC, LightningModule):
             hasattr(self, "_decoder_externally_configured") and self._decoder_externally_configured
         )
 
-        if self.gene_decoder_bool == False:
+        if not self.gene_decoder_bool:
             self.gene_decoder = None
             return
         if not decoder_already_configured and "decoder_cfg" in checkpoint["hyper_parameters"]:

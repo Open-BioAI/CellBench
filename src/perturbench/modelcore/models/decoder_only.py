@@ -32,7 +32,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 import torch
 import torch.nn.functional as F
 import lightning as L
-import numpy as np
 
 from ..nn.mlp import MLP
 from .base import PerturbationModel
