@@ -325,13 +325,12 @@ class scLAMBDA(PerturbationModel):
         """
         # Reconstruction loss for x (MSE) - with optional mask
         if mask is not None:
-            # Masked reconstruction loss for x
+            # Masked reconstruction loss for x - unified per-batch calculation
             mse_x = (x_hat - x) ** 2  # [batch_size, n_genes]
-            valid = mask.sum()
-            if valid > 0:
-                recon_loss_x = 0.5 * (mse_x * mask).sum() / valid
-            else:
-                recon_loss_x = 0.5 * torch.mean(torch.sum(mse_x, dim=1))
+            mask = mask.to(mse_x.device)
+            valid = mask.sum(dim=1)  # [batch_size] - per-batch valid gene count
+            loss_per_batch = (mse_x * mask).sum(dim=1)  # [batch_size] - per-batch loss
+            recon_loss_x = 0.5 * (loss_per_batch / valid).nanmean()
         else:
             # Standard reconstruction loss
             recon_loss_x = 0.5 * torch.mean(torch.sum((x_hat - x) ** 2, dim=1))
@@ -369,12 +368,12 @@ class scLAMBDA(PerturbationModel):
             mask: Optional expression mask for masked loss calculation.
         """
         if mask is not None:
+            # Masked reconstruction loss - unified per-batch calculation
             mse = (x_hat - x) ** 2  # [batch_size, n_genes]
-            valid = mask.sum()
-            if valid > 0:
-                return 0.5 * (mse * mask).sum() / valid
-            else:
-                return 0.5 * torch.mean(torch.sum(mse, dim=1))
+            mask = mask.to(mse.device)
+            valid = mask.sum(dim=1)  # [batch_size] - per-batch valid gene count
+            loss_per_batch = (mse * mask).sum(dim=1)  # [batch_size] - per-batch loss
+            return 0.5 * (loss_per_batch / valid).nanmean()
         else:
             return 0.5 * torch.mean(torch.sum((x_hat - x) ** 2, dim=1))
 

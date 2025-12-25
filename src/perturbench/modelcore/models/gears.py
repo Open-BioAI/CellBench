@@ -327,11 +327,9 @@ class GEARS(PerturbationModel):
         # Simple masked MSE for validation
         mse = (pred - y) ** 2
         if mask is not None:
-            valid = mask.sum()
-            if valid > 0:
-                loss = (mse * mask).sum() / valid
-            else:
-                loss = mse.mean()
+            valid = mask.sum(dim=1)
+            loss_per_batch = (mse * mask).sum(dim=1)
+            loss = (loss_per_batch / valid).nanmean()
         else:
             loss = torch.mean(mse, dim=-1).mean()
 

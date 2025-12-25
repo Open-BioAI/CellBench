@@ -178,11 +178,10 @@ class DecoderOnly(PerturbationModel):
                 observed_perturbed_expression,
                 reduction="none",
             )
-            valid = mask.sum()
-            if valid > 0:
-                loss = (masked_loss * mask).sum() / valid
-            else:
-                loss = masked_loss.mean()
+            # 这样才算给每个batch上有效gene算好mse_loss以后在batch上求平均
+            valid = mask.sum(dim=1)  # 指定维度[batch]
+            loss_per_batch = (masked_loss * mask).sum(dim=1)  # [batch]
+            loss = (loss_per_batch / valid).nanmean()
         else:
             # Fallback to standard MSE
             loss = F.mse_loss(predicted_perturbed_expression, observed_perturbed_expression)
@@ -216,11 +215,9 @@ class DecoderOnly(PerturbationModel):
                 observed_perturbed_expression,
                 reduction="none",
             )
-            valid = mask.sum()
-            if valid > 0:
-                val_loss = (masked_loss * mask).sum() / valid
-            else:
-                val_loss = masked_loss.mean()
+            valid = mask.sum(dim=1)
+            val_loss_per_batch = (masked_loss * mask).sum(dim=1)
+            val_loss = (val_loss_per_batch / valid).nanmean()
         else:
             # Fallback to standard MSE
             val_loss = F.mse_loss(

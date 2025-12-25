@@ -301,11 +301,10 @@ class PRNet(PerturbationModel):
             if mask is not None:
                 # Masked Gaussian NLL loss
                 nll = 0.5 * (torch.log(var) + (pred - x_obs) ** 2 / var)
-                valid = mask.sum()
-                if valid > 0:
-                    rec = (nll * mask).sum() / valid
-                else:
-                    rec = nll.mean()
+                # 这样才算给每个batch上有效gene算好loss以后在batch上求平均
+                valid = mask.sum(dim=1)  # 指定维度[batch]
+                rec_per_batch = (nll * mask).sum(dim=1)  # [batch]
+                rec = (rec_per_batch / valid).nanmean()
             else:
                 rec = self.gaussian_nll_loss(pred, x_obs, var)
         else:
@@ -313,11 +312,10 @@ class PRNet(PerturbationModel):
             if mask is not None:
                 # Masked MSE loss
                 mse = (pred - x_obs) ** 2
-                valid = mask.sum()
-                if valid > 0:
-                    rec = (mse * mask).sum() / valid
-                else:
-                    rec = mse.mean()
+                # 这样才算给每个batch上有效gene算好loss以后在batch上求平均
+                valid = mask.sum(dim=1)  # 指定维度[batch]
+                rec_per_batch = (mse * mask).sum(dim=1)  # [batch]
+                rec = (rec_per_batch / valid).nanmean()
             else:
                 rec = autofocus_mse(pred, x_obs, gamma=self.auto_focus_gamma)
 

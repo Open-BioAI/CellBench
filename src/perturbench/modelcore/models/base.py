@@ -31,6 +31,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import lightning as L
 import torch
+import torch.nn.functional as F
 from abc import ABC
 import pandas as pd
 import numpy as np
@@ -161,6 +162,8 @@ class PerturbationModel(L.LightningModule, ABC):
         y = observed
 
         if mask is not None:
+            # Ensure mask is on the same device as predictions
+            mask = mask.to(x.device)
             # Masked PCC: only compute on expressed genes
             valid_counts = mask.sum(dim=1, keepdim=True).clamp_min(1.0)  # Avoid division by zero
             x_mean = (x * mask).sum(dim=1, keepdim=True) / valid_counts
@@ -294,7 +297,56 @@ class PerturbationModel(L.LightningModule, ABC):
 
         batch,obs_df=data_tuple
         predicted_expression = self.predict(batch)
-        self.preds_list.append((predicted_expression.cpu().numpy(),obs_df))
+        
+        # Compute test loss with mask (similar to validation_step)
+        # Get ground truth labels
+        if isinstance(batch, dict):
+            y = batch.get('pert_cell_counts', None)
+        else:
+            y = getattr(batch, 'pert_cell_counts', None)
+        
+        if y is not None and predicted_expression is not None:
+            # Get device from y (usually GPU)
+            device = y.device
+            
+            # Ensure predictions are torch.Tensor and on same device as y (GPU)
+            # All computations will be done on GPU for efficiency
+            if not isinstance(predicted_expression, torch.Tensor):
+                predicted_expression = torch.as_tensor(predicted_expression, device=device, dtype=y.dtype)
+            else:
+                predicted_expression = predicted_expression.to(device, non_blocking=True)
+            
+            # Get expression mask using unified method from base class
+            mask = self._get_mask(batch)
+            if mask is not None:
+                mask = mask.to(device, non_blocking=True)
+            
+            # All computations on GPU: Compute masked MSE loss for test
+            mse = (predicted_expression - y).pow(2)  # Use pow(2) for efficiency
+            if mask is not None:
+                valid = mask.sum(dim=1)
+                test_loss_per_batch = (mse * mask).sum(dim=1)
+                test_loss = (test_loss_per_batch / valid).nanmean()
+            else:
+                test_loss = mse.mean()
+            
+            # Log test loss (only epoch-level to avoid excessive logging)
+            # Loss is already on GPU, Lightning will handle device transfer if needed
+            self.log("test_loss", test_loss, prog_bar=True, logger=True, batch_size=y.shape[0], on_step=False, on_epoch=True)
+            
+            # Compute test PCC on GPU (use mask if enabled)
+            # All computation stays on GPU
+            test_pcc = self._compute_masked_pcc(predicted_expression, y, mask)
+            self.log("test_PCC", test_pcc, prog_bar=True, logger=True, batch_size=y.shape[0], on_step=False, on_epoch=True)
+        
+        # Only convert to numpy for storage at the end (move to CPU only when needed)
+        # This minimizes CPU-GPU transfers
+        if isinstance(predicted_expression, torch.Tensor):
+            # Detach to avoid gradient computation, move to CPU only for storage
+            pred_np = predicted_expression.detach().cpu().numpy()
+        else:
+            pred_np = np.asarray(predicted_expression)
+        self.preds_list.append((pred_np, obs_df))
 
     def predict(self, batch):
         pass
@@ -389,38 +441,8 @@ class PerturbationModel(L.LightningModule, ABC):
 
             # ---- Determine evaluation features (gene subset) ----
             eval_features = None
-            # Use self.use_mask for unified control (training + evaluation)
-            if getattr(self, "use_mask", False):
-                # Construct gene mask from training dataset expression mask
-                try:
-                    train_dataset = self.datamodule.train_dataset
-                    if hasattr(train_dataset, "pert_expression_mask"):
-                        pert_mask = train_dataset.pert_expression_mask
-                        # Handle sparse matrices
-                        if hasattr(pert_mask, "toarray"):
-                            pert_mask = pert_mask.toarray()
-                        elif hasattr(pert_mask, "A"):
-                            pert_mask = pert_mask.A
-
-                        # Aggregate mask across cells: a gene is "masked" if it's expressed in at least one cell
-                        # This matches the training loss logic where we only optimize on expressed genes
-                        gene_mask = (pert_mask.sum(axis=0) > 0).astype(bool)
-
-                        # Apply infer_gene_ids if present
-                        if hasattr(self, 'infer_gene_ids'):
-                            gene_mask = gene_mask[self.infer_gene_ids]
-
-                        # Get gene names that pass the mask
-                        eval_features = [gene_names[i] for i in range(len(gene_names)) if gene_mask[i]]
-
-                        print(f"[Rank 0] Using masked genes for evaluation: {len(eval_features)} / {len(gene_names)} genes")
-                        sys.stdout.flush()
-                    else:
-                        print("[Rank 0] Warning: use_mask=True but train_dataset has no pert_expression_mask. Using all genes.")
-                        sys.stdout.flush()
-                except Exception as e:
-                    print(f"[Rank 0] Warning: Failed to construct gene mask: {e}. Using all genes.")
-                    sys.stdout.flush()
+            single_celline_mask=reference_adata.X.sum(axis=0)!=0
+            eval_features=self.gene_names[single_celline_mask]
 
             # ---- Perform evaluation ----
             ev = Evaluation(

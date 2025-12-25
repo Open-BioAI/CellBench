@@ -575,7 +575,7 @@ class StateTransitionPerturbationModel(PerturbationModel):
             B = 1
 
         main_loss = self.loss_fn(pred_for_loss, target).nanmean()
-        self.log("train_loss", main_loss)
+        self.log("train_loss", main_loss, on_step=True, on_epoch=True, batch_size=B)
 
         # Log individual loss components if using combined loss
         if hasattr(self.loss_fn, "sinkhorn_loss") and hasattr(self.loss_fn, "energy_loss"):
@@ -710,6 +710,29 @@ class StateTransitionPerturbationModel(PerturbationModel):
                  logger=True,
                  batch_size=B)
 
+        # Compute and log training PCC (use mask if enabled)
+        # Reshape pred and target for PCC computation
+        pred_2d = pred.reshape(-1, self.output_dim)
+        target_2d = target.reshape(-1, self.output_dim)
+        
+        # Get mask if use_mask is enabled
+        mask = self._get_mask(batch)
+        if mask is not None:
+            # Reshape mask to match pred_2d shape if needed
+            if mask.dim() == 2:
+                mask_2d = mask
+            else:
+                mask_2d = mask.reshape(-1, self.output_dim) if mask.numel() == pred_2d.numel() else None
+            # Ensure mask is on the same device as predictions
+            if mask_2d is not None:
+                mask_2d = mask_2d.to(pred_2d.device)
+        else:
+            mask_2d = None
+        
+        # Compute PCC (use mask if enabled)
+        train_pcc = self._compute_masked_pcc(pred_2d, target_2d, mask_2d)
+        self.log("train_PCC", train_pcc, prog_bar=True, logger=True, batch_size=B, on_step=True, on_epoch=True)
+
         return total_loss
 
     def validation_step(self, data_tuple:tuple[any,pd.DataFrame], batch_idx: int) -> None:
@@ -724,7 +747,7 @@ class StateTransitionPerturbationModel(PerturbationModel):
         target = self._get_target_tensor(batch, padded=False)
 
         loss = self.loss_fn(pred, target).mean()
-        self.log("val_loss", loss, batch_size=1)
+        self.log("val_loss", loss, batch_size=1, on_step=True, on_epoch=True)
 
         # Log individual loss components if using combined loss
         if hasattr(self.loss_fn, "sinkhorn_loss") and hasattr(self.loss_fn, "energy_loss"):
@@ -776,6 +799,29 @@ class StateTransitionPerturbationModel(PerturbationModel):
                  prog_bar=True,
                  logger=True,
                  batch_size=1)
+
+        # Compute and log validation PCC (use mask if enabled)
+        # Reshape pred and target from [1, -1, output_dim] to [-1, output_dim] for PCC computation
+        pred_2d = pred.reshape(-1, self.output_dim)
+        target_2d = target.reshape(-1, self.output_dim)
+        
+        # Get mask if use_mask is enabled
+        mask = self._get_mask(batch)
+        if mask is not None:
+            # Reshape mask to match pred_2d shape if needed
+            if mask.dim() == 2:
+                mask_2d = mask
+            else:
+                mask_2d = mask.reshape(-1, self.output_dim) if mask.numel() == pred_2d.numel() else None
+            # Ensure mask is on the same device as predictions
+            if mask_2d is not None:
+                mask_2d = mask_2d.to(pred_2d.device)
+        else:
+            mask_2d = None
+        
+        # Compute PCC (use mask if enabled)
+        val_pcc = self._compute_masked_pcc(pred_2d, target_2d, mask_2d)
+        self.log("val_PCC", val_pcc, prog_bar=True, logger=True, batch_size=1, on_step=True, on_epoch=True)
 
         return {"loss": loss, "predictions": pred}
 

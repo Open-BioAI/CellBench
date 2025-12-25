@@ -131,11 +131,10 @@ class GenePert(PerturbationModel):
                 target_delta,
                 reduction="none",
             )
-            valid = mask.sum()
-            if valid > 0:
-                loss = (masked_loss * mask).sum() / valid
-            else:
-                loss = masked_loss.mean()
+            # 这样才算给每个batch上有效gene算好mse_loss以后在batch上求平均
+            valid = mask.sum(dim=1)  # 指定维度[batch]
+            loss_per_batch = (masked_loss * mask).sum(dim=1)  # [batch]
+            loss = (loss_per_batch / valid).nanmean()
         else:
             # Fallback to standard MSE
             loss = F.mse_loss(predicted_delta, target_delta)
@@ -183,11 +182,9 @@ class GenePert(PerturbationModel):
                 target_delta,
                 reduction="none",
             )
-            valid = mask.sum()
-            if valid > 0:
-                loss = (masked_loss * mask).sum() / valid
-            else:
-                loss = masked_loss.mean()
+            valid = mask.sum(dim=1)
+            loss_per_batch = (masked_loss * mask).sum(dim=1)
+            loss = (loss_per_batch / valid).nanmean()
         else:
             # Fallback to standard MSE
             loss = F.mse_loss(predicted_delta, target_delta)

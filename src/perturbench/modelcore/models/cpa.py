@@ -391,13 +391,11 @@ class CPA(PerturbationModel):
             )  # shape: [batch_size, n_genes]
 
             mask = mask.to(masked_loss.device)
-            valid = mask.sum()
+            # 这样才算给每个batch上有效gene算好mse_loss以后在batch上求平均
+            valid = mask.sum(dim=1)  # 指定维度[batch]
+            recon_loss_per_batch = (masked_loss * mask).sum(dim=1)  # [batch]
+            recon_loss = (recon_loss_per_batch / valid).nanmean()
 
-            if valid > 0:
-                recon_loss = (masked_loss * mask).sum() / valid
-            else:
-                # Fallback to mean if mask is all zeros
-                recon_loss = masked_loss.mean()
         else:
             # Fallback to standard reconstruction loss when use_mask=False or no mask available
             recon_loss = self.decoder.reconstruction_loss(
@@ -674,6 +672,9 @@ class CPA(PerturbationModel):
                     on_step=True,
                     on_epoch=True,
                 )
+            
+            # Log train_loss (main loss for monitoring)
+            self.log("train_loss", total_loss, prog_bar=True, logger=True, batch_size=len(batch), on_step=True, on_epoch=True)
             
             # Compute training PCC (use mask if enabled)
             predictions = generative_outputs["predictions"]

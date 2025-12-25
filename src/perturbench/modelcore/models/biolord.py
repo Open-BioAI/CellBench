@@ -206,11 +206,10 @@ class BiolordStar(PerturbationModel):
                 observed_perturbed_expression,
                 reduction="none",
             )
-            valid = mask.sum()
-            if valid > 0:
-                recon_loss = (masked_loss * mask).sum() / valid
-            else:
-                recon_loss = masked_loss.mean()
+            # 这样才算给每个batch上有效gene算好mse_loss以后在batch上求平均
+            valid = mask.sum(dim=1)  # 指定维度[batch]
+            recon_loss_per_batch = (masked_loss * mask).sum(dim=1)  # [batch]
+            recon_loss = (recon_loss_per_batch / valid).nanmean()
         else:
             # Fallback to standard MSE
             recon_loss = F.mse_loss(
@@ -269,11 +268,9 @@ class BiolordStar(PerturbationModel):
                 observed_perturbed_expression,
                 reduction="none",
             )
-            valid = mask.sum()
-            if valid > 0:
-                val_recon_loss = (masked_loss * mask).sum() / valid
-            else:
-                val_recon_loss = masked_loss.mean()
+            valid = mask.sum(dim=1) 
+            val_recon_loss_per_batch = (masked_loss * mask).sum(dim=1)  # [batch]
+            val_recon_loss = (val_recon_loss_per_batch / valid).nanmean()
         else:
             # Fallback to standard MSE
             val_recon_loss = F.mse_loss(

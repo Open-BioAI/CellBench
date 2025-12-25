@@ -18,6 +18,7 @@ log = logging.getLogger(__name__)
 
 
 _PARSER_ARGS = None
+_CURRENT_MODEL_NAME = None  # Store current model name for batch_size auto-adjustment
 
 
 def _str2bool(v: str | bool | None) -> bool | None:
@@ -162,6 +163,14 @@ def _apply_cli_overrides(cfg: DictConfig, args: argparse.Namespace | None) -> Di
                 continue
         OmegaConf.update(cfg, key, value, merge=False)
 
+    # Force batch_size to 32 for state_sm model (fixed, ignores all external settings)
+    global _CURRENT_MODEL_NAME
+    if _CURRENT_MODEL_NAME == "state_sm":
+        log.info("Forcing batch_size=32 for state_sm model (ignoring sweep/external settings)")
+        OmegaConf.update(cfg, "data.train_batch_size", 8, merge=False)
+        OmegaConf.update(cfg, "data.val_batch_size", 8, merge=False)
+        OmegaConf.update(cfg, "data.test_batch_size", 8, merge=False)
+
     return cfg
 
 
@@ -223,6 +232,21 @@ def train(runtime_context: dict):
     # Set seed for random number generators in pytorch, numpy and python.random
     if cfg.get("seed"):
         L.seed_everything(cfg.seed, workers=True)
+
+    # Set sample_mode and cell_set_len based on model type
+    # Model decides data packaging mode: cell-wise [B,G] vs set-wise [B,S,G]
+    model_target = cfg.model.get("_target_", "")
+    is_state_transition = "StateTransitionPerturbationModel" in model_target or "state_transition" in model_target.lower()
+    
+    # Set sample_mode: "set" for state_transition models, "cell" for others
+    sample_mode = "set" if is_state_transition else "cell"
+    OmegaConf.update(cfg, "data.sample_mode", sample_mode, merge=False)
+    
+    # Set cell_set_len: 128 (or from model config) for state_transition, None for others
+    cell_set_len = cfg.model.get("cell_set_len", 128) if is_state_transition else None
+    OmegaConf.update(cfg, "data.cell_set_len", cell_set_len, merge=False)
+    
+    log.info(f"Model {model_target}: sample_mode={sample_mode}, cell_set_len={cell_set_len}")
 
     log.info("Instantiating datamodule <%s>", cfg.data._target_)
     datamodule: L.LightningDataModule =hydra.utils.instantiate(
@@ -551,6 +575,7 @@ if __name__ == "__main__":
         _PARSER_ARGS.data = None  # avoid double-handling
 
     if getattr(_PARSER_ARGS, "model", None) is not None:
+        _CURRENT_MODEL_NAME = _PARSER_ARGS.model  # Store model name for batch_size auto-adjustment
         hydra_overrides.append(f"model={_PARSER_ARGS.model}")
         _PARSER_ARGS.model = None
 

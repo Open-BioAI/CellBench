@@ -294,11 +294,9 @@ class SparseAdditiveVAE(PerturbationModel):
             # Masked reconstruction loss (MSE)
             import torch.nn.functional as F
             mse = F.mse_loss(predictions, observed_perturbed_expression, reduction='none')
-            valid = mask.sum()
-            if valid > 0:
-                reconstruction_loss = (mse * mask).sum() / valid
-            else:
-                reconstruction_loss = mse.sum(-1).mean()
+            valid = mask.sum(dim=1) 
+            reconstruction_loss_per_batch = (mse * mask).sum(dim=1)
+            reconstruction_loss = (reconstruction_loss_per_batch / valid).nanmean()
         else:
             reconstruction_loss = self.decoder.reconstruction_loss(
                 predictions, observed_perturbed_expression
@@ -373,6 +371,10 @@ class SparseAdditiveVAE(PerturbationModel):
             observed_perturbed_expression, perturbation, covariates, batch, mask=mask
         )
         loss = -elbo  # Minimize negative ELBO
+        
+        # Log train_loss (main loss for monitoring)
+        self.log("train_loss", loss, prog_bar=True, logger=True, batch_size=len(batch), on_step=True, on_epoch=True)
+        
         self.log(
             "kld",
             kld,

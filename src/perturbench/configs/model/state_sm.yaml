@@ -2,7 +2,7 @@ _target_: perturbench.modelcore.models.StateTransitionPerturbationModel
 
 use_cell_emb: false
 use_mask: true  # Unified mask switch for training loss and evaluation
-cell_set_len: 1
+cell_set_len: 128
 blur: 0.05
 hidden_dim: 672  # hidden dimension going into the transformer backbone
 loss: energy
