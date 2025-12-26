@@ -238,3 +238,4 @@ preprocess_data_with_split.py
 run_multi_gpu_agents.sh
 run_one_agent.sh
 scgpt_install.sh
+*.csv
