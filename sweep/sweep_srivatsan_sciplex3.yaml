@@ -1,5 +1,5 @@
 project: perturbench
-name: sciplex3_grid_1224_onlysciplex3
+name: onlysciplex3_1225_nomask
 method: grid
 
 metric:
@@ -39,7 +39,7 @@ parameters:
     value: false
 
   model.use_mask:
-    value: true
+    value: false
   model.use_cell_emb:
     value: false
 
