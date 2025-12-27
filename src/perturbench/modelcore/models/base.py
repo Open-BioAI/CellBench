@@ -186,35 +186,26 @@ class PerturbationModel(L.LightningModule, ABC):
         return pcc_per_cell.mean()
 
     def _get_mask(self, batch) -> torch.Tensor:
-        """
-        Get expression mask from batch if use_mask is enabled.
-
-        Args:
-            batch: Batch object or dict
-
-        Returns:
-            mask tensor or None
-        """
         if not self.use_mask:
             return None
 
-        # Handle both dict and Batch object
-        mask = None
+        # Get pert_cell_counts from batch (handle both dict and Batch object)
         if isinstance(batch, dict):
-            if "pert_expression_mask" in batch:
-                mask = batch["pert_expression_mask"]
+            pert_cell_counts = batch.get("pert_cell_counts", None)
         else:
-            if hasattr(batch, "pert_expression_mask"):
-                mask = batch.pert_expression_mask
+            pert_cell_counts = getattr(batch, "pert_cell_counts", None)
 
-        if mask is None:
+        if pert_cell_counts is None:
             return None
 
         # Handle sparse tensors - convert to dense for element-wise operations
-        if mask.is_sparse:
-            mask = mask.to_dense()
+        if pert_cell_counts.is_sparse:
+            pert_cell_counts = pert_cell_counts.to_dense()
 
-        return mask.float()
+        # Simple and effective: mask = (pert_cell_counts != 0)
+        mask = (pert_cell_counts != 0).float()
+
+        return mask
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(
