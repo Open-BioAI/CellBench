@@ -5,7 +5,9 @@ import sys
 import os
 import glob
 from typing import List, Optional
-
+import multiprocessing
+if multiprocessing.get_start_method(allow_none=True) is None:
+        multiprocessing.set_start_method('spawn')
 import hydra
 from lightning.pytorch.loggers import WandbLogger
 import lightning as L
@@ -226,6 +228,22 @@ def find_latest_checkpoint(output_dir: str) -> Optional[str]:
     return latest_ckpt
 
 
+def get_auto_experiment_name(cfg: DictConfig, model_name: str) -> str:
+    OmegaConf.set_struct(cfg, False)
+    # 生成包含模型名和学习率的 run name
+    lr = cfg.get("model", {}).get("lr", "unknown")
+    # 格式化学习率（避免科学计数法）
+    if isinstance(lr, float):
+        lr_str = f"{lr:.0e}" if lr < 0.01 else f"{lr}"
+    else:
+        lr_str = str(lr)
+    auto_name = f"{model_name}_lr{lr_str}"
+    
+    # 修改配置（在 logger 创建之前）
+    OmegaConf.update(cfg, "logger.wandb.name", auto_name, merge=False)
+    log.info("Auto-generated wandb run name: %s (model: %s, lr: %s)", auto_name, model_name, lr_str)
+    return auto_name
+
 def train(runtime_context: dict):
 
     cfg = runtime_context["cfg"]
@@ -264,158 +282,21 @@ def train(runtime_context: dict):
     # 这样 WandbLogger 初始化时就能使用正确的 name
     
     # 从 cfg 中推断 model 名称（从 _target_ 提取）
-    model_name = "unknown"
     model_target = cfg.get("model", {}).get("_target_", "")
-    if model_target:
-        # 例如 "perturbench.modelcore.models.gears.GEARS" -> "gears"
-        # 例如 "perturbench.modelcore.models.BiolordStar" -> "biolord"
-        parts = model_target.split(".")
-        for i, part in enumerate(parts):
-            if part == "models" and i + 1 < len(parts):
-                # 提取模型名，去掉可能的类名后缀（如 Star, Model, Net 等）
-                raw_name = parts[i + 1]
-                # 转换为小写，并去掉常见的类名后缀
-                model_name = raw_name.lower()
-                # 去掉常见后缀
-                for suffix in ["star", "model", "net", "module", "class"]:
-                    if model_name.endswith(suffix) and len(model_name) > len(suffix):
-                        model_name = model_name[:-len(suffix)]
-                        break
-                break
-        if model_name == "unknown":
-            # 回退：取最后一个部分并转小写，去掉后缀
-            raw_name = parts[-1].lower() if parts else "unknown"
-            if raw_name != "unknown":
-                model_name = raw_name
-                for suffix in ["star", "model", "net", "module", "class"]:
-                    if model_name.endswith(suffix) and len(model_name) > len(suffix):
-                        model_name = model_name[:-len(suffix)]
-                        break
-    
-    # 如果还是没找到，尝试从 Hydra overrides 中获取（安全方式）
-    if model_name == "unknown":
-        try:
-            hydra_cfg = HydraConfig.get()
-            # 尝试不同的路径来获取 overrides
-            overrides = None
-            if hasattr(hydra_cfg.job, "overrides"):
-                if hasattr(hydra_cfg.job.overrides, "task"):
-                    overrides = hydra_cfg.job.overrides.task
-                elif isinstance(hydra_cfg.job.overrides, list):
-                    overrides = hydra_cfg.job.overrides
-            
-            if overrides:
-                for override in overrides:
-                    if isinstance(override, str) and override.startswith("model="):
-                        model_name = override.split("=", 1)[1]
-                        break
-        except Exception:
-            # 如果获取 overrides 失败，忽略，使用默认的 "unknown"
-            pass
+    model_name = model_target.split('.')[-1].lower()
     
     # 如果 logger.wandb.name 是默认的 "gears" 或未设置，在创建前修改配置
-    try:
-        OmegaConf.set_struct(cfg, False)
-        if cfg.get("logger") and hasattr(cfg.logger, "wandb"):
-            current_name = cfg.logger.wandb.get("name", None)
-            if current_name is None or current_name == "gears":
-                # 生成包含模型名和学习率的 run name
-                lr = cfg.get("model", {}).get("lr", "unknown")
-                # 格式化学习率（避免科学计数法）
-                if isinstance(lr, float):
-                    lr_str = f"{lr:.0e}" if lr < 0.01 else f"{lr}"
-                else:
-                    lr_str = str(lr)
-                auto_name = f"{model_name}_lr{lr_str}"
-                
-                # 修改配置（在 logger 创建之前）
-                OmegaConf.update(cfg, "logger.wandb.name", auto_name, merge=False)
-                log.info("Auto-generated wandb run name: %s (model: %s, lr: %s)", auto_name, model_name, lr_str)
-    except Exception as e:
-        log.warning("Failed to update logger.wandb.name in config: %s", e)
-
+    auto_name = get_auto_experiment_name(cfg, model_name)
     log.info("Instantiating loggers...")
     # 尝试实例化 loggers，如果 wandb 初始化失败，继续使用其他 loggers
-    try:
-        loggers: List[Logger] = multi_instantiate(cfg.get("logger"))
-    except Exception as e:
-        log.warning("Failed to instantiate some loggers: %s. Continuing with available loggers.", e)
-        # 如果所有 loggers 都失败，尝试只实例化非 wandb loggers
-        logger_cfg = cfg.get("logger", {})
-        if logger_cfg:
-            loggers = []
-            for logger_name, logger_conf in logger_cfg.items():
-                try:
-                    if isinstance(logger_conf, DictConfig) and "_target_" in logger_conf:
-                        target = logger_conf.get("_target_", "")
-                        # 如果 wandb 失败，跳过它，继续使用其他 loggers
-                        if "wandb" in target.lower():
-                            log.warning("Skipping wandb logger due to initialization error. Continuing with other loggers.")
-                            continue
-                        loggers.append(hydra.utils.instantiate(logger_conf, _recursive_=False))
-                except Exception as logger_e:
-                    log.warning("Failed to instantiate logger %s: %s", logger_name, logger_e)
-            if not loggers:
-                log.error("All loggers failed to initialize. Training may continue without logging.")
-                loggers = []
-        else:
-            loggers = []
 
+    loggers: List[Logger] = multi_instantiate(cfg.get("logger"))
+    
     # 双重保险：如果 logger 已经创建但 name 还是 gears，再次设置
     for logger in loggers:
         if isinstance(logger, WandbLogger):
-            current_name = getattr(logger, "name", None) or getattr(logger, "_name", None)
-            if current_name == "gears":
-                # 重新生成 name
-                lr = cfg.get("model", {}).get("lr", "unknown")
-                if isinstance(lr, float):
-                    lr_str = f"{lr:.0e}" if lr < 0.01 else f"{lr}"
-                else:
-                    lr_str = str(lr)
-                auto_name = f"{model_name}_lr{lr_str}"
-                
-                # 尝试多种方式设置 name
-                try:
-                    logger.name = auto_name
-                except Exception:
-                    pass
-                try:
-                    if hasattr(logger, "experiment") and logger.experiment:
-                        logger.experiment.name = auto_name
-                except Exception:
-                    pass
-                
-                log.info("Updated wandb run name to: %s", auto_name)
-    
-    # Auto-adjust trainer config for single GPU: disable DDP and use FP32 precision
-    # This fixes the "No inf checks were recorded" error when using AMP with DDP on single GPU
-    trainer_cfg = cfg.get("trainer", {})
-    devices = trainer_cfg.get("devices", None)
-    
-    # Check if devices is 1 (single GPU)
-    if devices is not None:
-        if isinstance(devices, (list, tuple)):
-            num_devices = len(devices)
-        elif isinstance(devices, (int, str)):
-            try:
-                num_devices = int(devices)
-            except (ValueError, TypeError):
-                num_devices = 1
-        else:
-            num_devices = 1
-        
-        if num_devices == 1:
-            # Single GPU: disable DDP strategy and use FP32 to avoid AMP issues
-            strategy = trainer_cfg.get("strategy", None)
-            if strategy and "ddp" in str(strategy).lower():
-                log.warning("Single GPU detected (devices=1). Disabling DDP strategy to avoid compatibility issues.")
-                OmegaConf.update(cfg, "trainer.strategy", "auto", merge=False)
-            
-            # Also disable mixed precision for single GPU to avoid AMP scaler issues
-            precision = trainer_cfg.get("precision", None)
-            if precision == 16 or precision == "16" or precision == "16-mixed":
-                log.warning("Single GPU detected (devices=1). Disabling mixed precision (FP16) to avoid AMP scaler issues.")
-                OmegaConf.update(cfg, "trainer.precision", 32, merge=False)
+            logger.experiment.name = auto_name
+            log.info("Updated wandb run name to: %s", auto_name)
     
     trainer: L.Trainer = hydra.utils.instantiate(
         cfg.trainer, callbacks=callbacks, logger=loggers
