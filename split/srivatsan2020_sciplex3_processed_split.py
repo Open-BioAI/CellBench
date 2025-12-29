@@ -169,7 +169,7 @@ def create_processed_split(
     obs = adata.obs
     print(f"  Shape: {adata.shape}")
 
-    # 新建 cell_cluster 列：优先选取 cell_line，如果没有 cell_line，就用 celltype 作为 cell_cluster 列
+    # 新建 cell_cluster 列：优先选取 cell_line，如果没有就用 celltype
     if 'cell_line' in obs.columns:
         obs['cell_cluster'] = obs['cell_line']
         print(f"Using 'cell_line' column as 'cell_cluster'")
@@ -178,12 +178,6 @@ def create_processed_split(
         print(f"Using 'celltype' column as 'cell_cluster'")
     else:
         raise ValueError("Neither 'cell_line' nor 'celltype' column found in adata.obs")
-
-    # 打印 cell_cluster 列的统计信息
-    cell_cluster_counts = obs['cell_cluster'].value_counts()
-    print(f"\nCell cluster distribution:")
-    for cluster, count in cell_cluster_counts.items():
-        print(f"  {cluster}: {count:,} cells")
 
     # 检查必要列
     required_cols = [cell_cluster_col, gene_pt_col, drug_pt_col, env_pt_col]

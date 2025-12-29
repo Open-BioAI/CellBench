@@ -195,7 +195,7 @@ tensorboard/
 *.h5ad
 
 # Data directory
-data/
+/data/
 
 # Check directory (contains large h5ad files)
 check/*.h5ad

@@ -1,0 +1,5 @@
+_target_: perturbench.data.transforms.GenePertTransform
+_partial_: true
+pert_key: ${data.pert_key}
+pert_emb_path: ${model.gene_embedding_path}
+delimiter: ${data.perturbation_combination_delimiter}

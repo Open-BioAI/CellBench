@@ -1,0 +1,14 @@
+evaluation_pipelines:
+  - aggregation: average
+    metric: rmse
+    rank: True
+  
+  - aggregation: logfc
+    metric: cosine
+    rank: True
+  
+save_evaluation: True
+save_dir: "${paths.output_dir}/evaluation/"
+print_summary: True
+# Save predictions to wandb as artifacts (predictions.h5ad, reference.h5ad, summary_metrics.csv)
+save_predictions_to_wandb: True

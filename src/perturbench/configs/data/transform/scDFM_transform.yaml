@@ -1,0 +1,5 @@
+_target_: perturbench.data.transforms.scDFMTransform
+_partial_: true
+pert_map_path: ${data.co_expression_graph_config.dir}/gene2idx.pt
+pert_key: ${data.pert_key}
+perturbation_combination_delimiter: ${data.perturbation_combination_delimiter}

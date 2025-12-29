@@ -1,0 +1,35 @@
+
+#你们改模型debug只需调整batch_size,其它的不用管
+defaults:
+  - transform: mix_pert_transform                        #加载transform配置
+  - splitter: null                                      #加载splitter配置
+  - evaluation: default                                 #加载evaluation配置
+
+_target_: perturbench.data.modules.PertDataModule
+data_path: ./data/all_cell_line_filterdrug.h5ad    #预处理好的anndata路径
+train_batch_size: 300                                   #训练批次大小
+val_batch_size: 300                                     #验证批次大小
+test_batch_size: 300                                    #测试批次大小
+gene_key: gene_pt                                       #基因扰动列名
+drug_key: drug_pt                                       #药物扰动列名
+env_key: env_pt                                         #环境扰动列名
+crispr_key: CRISPR                                      #CRIPR i/a/ko
+result_avg_keys: [cell_cluster]                         #最终结果在哪个维度上求平均
+control_val: control                                    #扰动列中对照组名称
+cov_keys: [cell_cluster,dataset]                        #协变量列名
+perturbation_combination_delimiter: +                   #eg：双扰动数据扰动名为pert1+pert2格式
+embedding_key: null #None                               #若不为null，训练时提取adata.obsm[embedding_key]，作为模型输入训练
+cov_avg_sampling: False                                 #若为true，在训练时对每种协变量抽取cells比例相同
+add_keys: null                                          #补充还想用到的obs列
+train_num_workers: 0   # Reduced to avoid memory leaks
+val_num_workers: 0     # Reduced to avoid memory leaks
+test_num_workers: 0    # Reduced to avoid memory leaks
+task: null                                                  # Task name for external CSV split: unseen_cell / single_dataset_test / single_dataset_two_cellline / two_datasets_two_celllines
+split_dir: null                                             # Base directory for split CSV files (default: ./split)
+# cell_set_len and sample_mode are automatically set by train.py based on model type:
+# - state_transition models: sample_mode=set, cell_set_len from model config (default 128)
+# - other models: sample_mode=cell, cell_set_len=None
+# Do not set cell_set_len here manually!
+
+# splitter:
+#   max_heldout_fraction_per_covariate: 0.7               #重写覆盖splitter的参数

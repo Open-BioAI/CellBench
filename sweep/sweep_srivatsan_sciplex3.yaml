@@ -1,5 +1,5 @@
 project: perturbench
-name: sciplex3_original_1226_nomask_nocovariate
+name: sciplex3_hvg_1229_nomask_nocovariate
 method: grid
 
 metric:
@@ -13,7 +13,7 @@ parameters:
   # data.task:
   #   value: srivatsantrapnell2020_sciplex3
   data.data_path:
-    value: /fs-computility-new/upzd_share/maoxinjie/AIVC/mxj/perturbench-main/data/sciplex3_original.h5ad
+    value: /fs-computility-new/upzd_share/maoxinjie/AIVC/mxj/perturbench-main/data/sciplex3_hvg.h5ad
 
   train:
     value: true
@@ -45,7 +45,7 @@ parameters:
 
   data.train_batch_size:
     value: 256
-  
+
   # sweep 项（注意：model 只能是单值 categorical，不要让它变成 list）
   model:
     values: [biolord, cpa, genepert, sclambda, squidiff, decoder_only, gears, latent_additive, linear_additive, prnet, sams_vae, state_sm]

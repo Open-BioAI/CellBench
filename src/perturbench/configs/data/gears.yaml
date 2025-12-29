@@ -1,0 +1,21 @@
+defaults:
+  - transform: gears_transform                         #加载transform配置
+  - splitter: combination_prediction_task               #加载splitter配置
+  - evaluation: default                                 #加载evaluation配置
+
+_target_: perturbench.data.modules.PertDataModule
+data_path: ${paths.data_dir}/norman19_processed.h5ad    #预处理好的anndata路径
+train_batch_size: 32                                     #训练批次大小
+val_batch_size: 32                                       #验证批次大小
+test_batch_size: 32                                     #测试批次大小
+pert_key: condition                                     #adata.obs中扰动列名
+control_val: control                                    #扰动列中对照组名称
+cov_keys: [cell_type]                                   #协变量列名
+perturbation_combination_delimiter: +                   #eg：双扰动数据扰动名为pert1+pert2格式
+embedding_key: null #None                               #若不为null，训练时提取adata.obsm[embedding_key]，作为模型输入训练
+cov_avg_sampling: False                                 #若为true，在训练时对每种协变量抽取cells比例相同
+add_keys: null                                          #补充还想用到的obs列
+predict_controls: True                                  #模型可以预测对照组
+
+splitter:
+  max_heldout_fraction_per_covariate: 0.7               #重写覆盖splitter的参数

@@ -404,19 +404,25 @@ def main(cfg: DictConfig) -> float | None:
     # CLI parser args have highest priority: use them to override Hydra cfg
     cfg = _apply_cli_overrides(cfg, _PARSER_ARGS)
     
-    # 设置 TMPDIR 到日志目录所在的文件系统，避免跨设备移动 checkpoint 时出错
-    # 这样可以确保临时文件创建在与 checkpoint 相同的文件系统上
+    # 设置 TMPDIR：优先使用已设置的环境变量，否则设置为日志目录下的临时目录
+    # 这可以确保临时文件创建在与 checkpoint 相同的文件系统上，避免跨设备移动问题
     import os
-    log_dir = cfg.get("paths", {}).get("log_dir", None)
-    if log_dir:
-        # 确保 log_dir 存在
-        os.makedirs(log_dir, exist_ok=True)
-        # 在 log_dir 下创建临时目录
-        tmp_dir = os.path.join(log_dir, ".tmp")
-        os.makedirs(tmp_dir, exist_ok=True)
-        # 设置 TMPDIR 环境变量（仅对当前进程有效）
-        os.environ["TMPDIR"] = tmp_dir
-        log.info(f"Set TMPDIR to {tmp_dir} to avoid cross-device checkpoint save errors")
+    existing_tmpdir = os.environ.get("TMPDIR")
+    if existing_tmpdir:
+        # 如果已经设置了TMPDIR（比如从run_multi_gpu_agents.sh），使用现有的设置
+        log.info(f"Using existing TMPDIR: {existing_tmpdir}")
+    else:
+        # 否则设置到日志目录下以避免跨设备checkpoint保存问题
+        log_dir = cfg.get("paths", {}).get("log_dir", None)
+        if log_dir:
+            # 确保 log_dir 存在
+            os.makedirs(log_dir, exist_ok=True)
+            # 在 log_dir 下创建临时目录
+            tmp_dir = os.path.join(log_dir, ".tmp")
+            os.makedirs(tmp_dir, exist_ok=True)
+            # 设置 TMPDIR 环境变量（仅对当前进程有效）
+            os.environ["TMPDIR"] = tmp_dir
+            log.info(f"Set TMPDIR to {tmp_dir} to avoid cross-device checkpoint save errors")
 
     runtime_context = {"cfg": cfg, "trial_number": HydraConfig.get().job.get("num")}
 

@@ -1,0 +1,3 @@
+_target_: perturbench.data.transforms.SCLambdaTransform
+_partial_: true
+pert_key: ${data.pert_key}

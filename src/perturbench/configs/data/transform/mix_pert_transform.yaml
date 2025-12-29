@@ -1,0 +1,20 @@
+_target_: perturbench.data.transforms.MixPertTransform
+_partial_: true
+gene_key: ${data.gene_key} #从data的yaml配置同步参数
+drug_key: ${data.drug_key}
+env_key: ${data.env_key}
+crispr_key: ${data.crispr_key}
+cov_keys: ${data.cov_keys}
+
+#扰动和协变量emb字典储存路径
+crispr_map_path: ${paths.work_dir}/cpa/crispr_map.pt
+gene_map_path: ${paths.work_dir}/cpa/gene_map.pt
+drug_map_path: fs-computility-new/upzd_share/maoxinjie/AIVC/mxj/perturbench-main/SMILES.pt
+env_map_path: ${paths.work_dir}/cpa/env_map.pt
+cov_maps_path: ${paths.work_dir}/cov_maps.pt
+
+null_token: '' #空缺的扰动值用什么代替就填什么
+# use_covs: ${model.inject_covariates_encoder} #从所选的模型yaml配置同步参数
+use_covs: false
+use_cell_emb: ${model.use_cell_emb}  #是否使用预训练细胞嵌入
+comb_delim: ${data.perturbation_combination_delimiter}
