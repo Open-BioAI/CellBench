@@ -32,6 +32,7 @@ class BiolordStar(PerturbationModel):
         softplus_output: bool = True,
         n_total_covariates: int | None = None,
         use_mask: bool = False,  # Unified mask switch for training loss and evaluation
+        use_covs: bool = False,  # Unified covariate usage parameter
         datamodule: L.LightningDataModule | None = None,
             **kwargs,
     ):
@@ -75,6 +76,12 @@ class BiolordStar(PerturbationModel):
             lr_scheduler_total_steps=lr_scheduler_total_steps,
             use_mask=use_mask,  # Pass use_mask to base class
         )
+        # Auto-configure covariate usage based on data transform's use_covs setting or parameter
+        if hasattr(datamodule.train_dataset.transform, 'use_covs') and datamodule.train_dataset.transform.use_covs:
+            # If data transform enables covariates, automatically enable covariate injection
+            use_covs = True
+
+        self.use_covs = use_covs
         self.save_hyperparameters(ignore=["datamodule"])
 
         n_total_covariates = datamodule.train_dataset.transform.n_total_covs
@@ -132,7 +139,7 @@ class BiolordStar(PerturbationModel):
         #         [self.lord_embedding[:, cov.bool()].T for cov in covariates["cell_cluster"]]
         #     )
         # 处理协变量：将所有 covariate 的 one-hot 向量拼接，然后通过 lord_embedding 转换为嵌入
-        if covariates and any(cov is not None and len(cov) > 0 for cov in covariates.values()):
+        if self.use_covs and covariates and any(cov is not None and len(cov) > 0 for cov in covariates.values()):
             # 拼接所有 covariate 的 one-hot 向量
             # covariates 是一个字典，每个值是一个 tensor，形状为 [batch_size, onehot_dim]
             cov_tensors = [cov for cov in covariates.values() if cov is not None and len(cov) > 0]

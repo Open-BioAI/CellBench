@@ -32,7 +32,7 @@ test: True
 # which checkpoint to use for testing when multiple checkpoints are saved
 # options: "loss" (use checkpoint with best val_loss_epoch), "pcc" (use checkpoint with best val_PCC_epoch), or "all" (test with all available checkpoints)
 # only applies when train=True, otherwise use ckpt_path
-test_ckpt_type: "pcc"  # "loss", "pcc"
+test_ckpt_type: "loss"  # "loss", "pcc"
 
 # simply provide checkpoint path to resume training or for testing (when train=False)
 ckpt_path: null

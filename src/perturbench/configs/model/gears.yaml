@@ -8,27 +8,30 @@ comb_delim: ${data.perturbation_combination_delimiter}
 control_val: ${data.control_val}
 build_GO_workers: 100
 seed: 42
-hidden_size: 384
+# GEARS原始论文参数 (从注释中恢复)
+hidden_size: 64  # 原始: 64, 当前: 384 (过大导致过拟合)
 num_go_gnn_layers: 1
-num_gene_gnn_layers: 2
-decoder_hidden_size: 48
-num_similar_genes_go_graph: 25
-num_similar_genes_co_express_graph: 15
-coexpress_threshold: 0.31
+num_gene_gnn_layers: 1  # 原始: 1, 当前: 2 (层数过多)
+decoder_hidden_size: 16  # 原始: 16, 当前: 48 (过大)
+num_similar_genes_go_graph: 20  # 原始: 20, 当前: 25
+num_similar_genes_co_express_graph: 20  # 原始: 20, 当前: 15
+coexpress_threshold: 0.4  # 原始: 0.4, 当前: 0.31 (过低)
 uncertainty: False
 uncertainty_reg: 1
 direction_lambda: 1e-1
 
 use_cell_emb: false
 use_mask: true  # Enable expression mask for weighted loss calculation
+# use_covs is now auto-configured based on data.transform.use_covs
+# use_covs: False
 
-lr: 3.863459970955458e-05
-wd: 0.0009967351093758648
+lr: 1e-3  # GEARS原始学习率
+wd: 1e-6  # 降低权重衰减
 lr_scheduler_freq: 1
 lr_scheduler_interval: epoch
-lr_scheduler_patience: 20
-lr_scheduler_factor: 0.7
+lr_scheduler_patience: 10
+lr_scheduler_factor: 0.5
 lr_monitor_key: val_loss
 lr_scheduler_mode: onecycle  # Options: "onecycle", "plateau", or null/step (default: StepLR with step_size=1, gamma=0.5)
-lr_scheduler_max_lr: 0.001   # Max learning rate for OneCycleLR (only used when mode=onecycle)
+# lr_scheduler_max_lr: 0.001   # Max learning rate for OneCycleLR (only used when mode=onecycle)
 # lr_scheduler_total_steps: auto-calculated from dataloader size * max_epochs

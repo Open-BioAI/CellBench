@@ -31,8 +31,7 @@ class SparseAdditiveVAE(PerturbationModel):
         latent_dim (int): Latent dimension.
         sparse_additive_mechanism (bool): Whether to use sparse additive mechanism.
         mean_field_encoding (bool): Whether to use mean field encoding.
-        inject_covariates_encoder (bool): Whether to inject covariates in the encoder.
-        inject_covariates_decoder (bool): Whether to inject covariates in the decoder.
+        use_covs (bool): Whether to inject covariates in both encoder and decoder.
         mask_prior_probability (float): The target probability for the masks.
         datamodule (L.LightningDataModule | None): LightningDataModule for data loading.
 
@@ -55,8 +54,7 @@ class SparseAdditiveVAE(PerturbationModel):
             hidden_dim_cond: int = 128,
             latent_dim: int = 40,
             dropout: float = 0.2,
-            inject_covariates_encoder: bool = False,
-            inject_covariates_decoder: bool = False,
+        use_covs: bool = False,  # Unified covariate usage parameter
             mask_prior_probability: float = 0.01,
             lr: int | None = None,
             wd: int | None = None,
@@ -98,8 +96,7 @@ class SparseAdditiveVAE(PerturbationModel):
             lr_scheduler_mode (str): Learning rate scheduler mode ("plateau", "onecycle", "step").
             lr_scheduler_max_lr (float): Maximum learning rate for OneCycleLR.
             lr_scheduler_total_steps (int): Total training steps for OneCycleLR.
-            inject_covariates_encoder (bool): Whether to inject covariates in the encoder.
-            inject_covariates_decoder (bool): Whether to inject covariates in the decoder.
+            use_covs (bool): Whether to inject covariates in both encoder and decoder.
             mask_prior_probability (float): The target probability for the masks.
             softplus_output (bool): Whether to apply a softplus activation to the
                 output of the decoder to enforce non-negativity
@@ -126,27 +123,31 @@ class SparseAdditiveVAE(PerturbationModel):
 
         self.n_perts=datamodule.train_dataset.transform.n_perts
 
+        # Auto-configure covariate usage based on data transform's use_covs setting or parameter
+        if hasattr(datamodule.train_dataset.transform, 'use_covs') and datamodule.train_dataset.transform.use_covs:
+            # If data transform enables covariates, automatically enable covariate injection
+            use_covs = True
+
+        self.use_covs = use_covs
         self.latent_dim = latent_dim
         self.latent_dim_pert = latent_dim * self.n_perts
-        self.inject_covariates_encoder = inject_covariates_encoder
-        self.inject_covariates_decoder = inject_covariates_decoder
         self.mask_prior_probability = mask_prior_probability
         self.softplus_output = softplus_output
         self.generative_counterfactual = generative_counterfactual
 
         self.perturbations_all_sum = None
 
-        if self.inject_covariates_encoder or self.inject_covariates_decoder:
+        if self.use_covs:
             self.n_total_covariates = datamodule.train_dataset.transform.n_total_covs
 
         encoder_input_dim = (
             self.n_genes + self.n_total_covariates
-            if self.inject_covariates_encoder
+            if self.use_covs
             else self.n_genes
         )
         decoder_input_dim = (
             latent_dim + self.n_total_covariates
-            if self.inject_covariates_decoder
+            if self.use_covs
             else latent_dim
         )
 
@@ -199,12 +200,12 @@ class SparseAdditiveVAE(PerturbationModel):
         batch_size = observed_perturbed_expression.shape[0]
         # perturbations_per_cell = perturbation.sum(axis=1)
 
-        if self.inject_covariates_encoder or self.inject_covariates_decoder:
+        if self.use_covs:
             merged_covariates = torch.cat(
                 [cov for cov in covariates.values()], dim=1
             )
 
-        if self.inject_covariates_encoder:
+        if self.use_covs:
             observed_expression_with_covariates = torch.cat(
                 [observed_perturbed_expression, merged_covariates.to(self.device)],
                 dim=1,
@@ -255,6 +256,8 @@ class SparseAdditiveVAE(PerturbationModel):
                 if self.disable_e_dist:
                     e_t = e_mu
                 else:
+                    # Numerical stability: clamp log variance
+                    e_log_var = torch.clamp(e_log_var, min=-10.0, max=10.0)
                     # Sample from q(e|x,p)
                     e_dist = dist.Normal(e_mu, torch.exp(0.5 * e_log_var).clip(min=1e-8))
                     e_t = e_dist.rsample()
@@ -272,6 +275,9 @@ class SparseAdditiveVAE(PerturbationModel):
             observed_expression_with_covariates_and_z_p
         )
 
+        # Numerical stability: clamp log variance and handle NaN/inf values
+        z_log_var_x = torch.clamp(z_log_var_x, min=-10.0, max=10.0)  # Prevent extreme values
+
         # Sample from q(z|x)
         q_z = dist.Normal(z_mu_x, torch.exp(0.5 * z_log_var_x).clip(min=1e-8))
         # only z_basal is sampled from the prior at inference time
@@ -279,7 +285,7 @@ class SparseAdditiveVAE(PerturbationModel):
 
         z = z_basal + z_p
 
-        if self.inject_covariates_decoder:
+        if self.use_covs:
             z = torch.cat([z, merged_covariates], dim=1)
 
         predictions = self.decoder(z, library_size=None)
@@ -313,7 +319,9 @@ class SparseAdditiveVAE(PerturbationModel):
             if not self.disable_e_dist:
                 # Calculate log probabilities for perturbation effects if there are any
                 if e_mu is not None:
-                    q_e = dist.Normal(e_mu, torch.exp(0.5 * e_log_var).clip(min=1e-8))
+                    # Numerical stability: clamp log variance
+                    e_log_var_clamped = torch.clamp(e_log_var, min=-10.0, max=10.0)
+                    q_e = dist.Normal(e_mu, torch.exp(0.5 * e_log_var_clamped).clip(min=1e-8))
                     p_e = dist.Normal(torch.zeros_like(e_mu), torch.ones_like(e_mu))
                     log_qe = q_e.log_prob(e_t).sum(axis=-1)
                     log_pe = p_e.log_prob(e_t).sum(axis=-1)

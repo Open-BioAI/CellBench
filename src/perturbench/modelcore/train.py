@@ -20,7 +20,6 @@ log = logging.getLogger(__name__)
 
 
 _PARSER_ARGS = None
-_CURRENT_MODEL_NAME = None  # Store current model name for batch_size auto-adjustment
 
 
 def _str2bool(v: str | bool | None) -> bool | None:
@@ -88,7 +87,34 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         dest="model_lr_scheduler_max_lr",
         type=float,
     )
+    parser.add_argument(
+        "--model.lr_scheduler_factor",
+        dest="model_lr_scheduler_factor",
+        type=float,
+    )
+    parser.add_argument(
+        "--model.lr_scheduler_mode",
+        dest="model_lr_scheduler_mode",
+        type=str,
+    )
+    parser.add_argument(
+        "--model.lr_scheduler_patience",
+        dest="model_lr_scheduler_patience",
+        type=int,
+    )
     parser.add_argument("--model.wd", dest="model_wd", type=float)
+
+    # early stopping parameters
+    parser.add_argument(
+        "--callbacks.early_stopping.monitor",
+        dest="callbacks_early_stopping_monitor",
+        type=str,
+    )
+    parser.add_argument(
+        "--callbacks.early_stopping.patience",
+        dest="callbacks_early_stopping_patience",
+        type=int,
+    )
 
     # logger / wandb related
     parser.add_argument(
@@ -140,7 +166,12 @@ def _apply_cli_overrides(cfg: DictConfig, args: argparse.Namespace | None) -> Di
         "model_dropout": "model.dropout",
         "model_lr": "model.lr",
         "model_lr_scheduler_max_lr": "model.lr_scheduler_max_lr",
+        "model_lr_scheduler_factor": "model.lr_scheduler_factor",
+        "model_lr_scheduler_mode": "model.lr_scheduler_mode",
+        "model_lr_scheduler_patience": "model.lr_scheduler_patience",
         "model_wd": "model.wd",
+        "callbacks_early_stopping_monitor": "callbacks.early_stopping.monitor",
+        "callbacks_early_stopping_patience": "callbacks.early_stopping.patience",
         "logger_wandb_project": "logger.wandb.project",
         "logger_wandb_name": "logger.wandb.name",
     }
@@ -165,13 +196,8 @@ def _apply_cli_overrides(cfg: DictConfig, args: argparse.Namespace | None) -> Di
                 continue
         OmegaConf.update(cfg, key, value, merge=False)
 
-    # Force batch_size to 32 for state_sm model (fixed, ignores all external settings)
-    global _CURRENT_MODEL_NAME
-    if _CURRENT_MODEL_NAME == "state_sm":
-        log.info("Forcing batch_size=32 for state_sm model (ignoring sweep/external settings)")
-        OmegaConf.update(cfg, "data.train_batch_size", 8, merge=False)
-        OmegaConf.update(cfg, "data.val_batch_size", 8, merge=False)
-        OmegaConf.update(cfg, "data.test_batch_size", 8, merge=False)
+    # Allow dynamic batch_size adjustment for all models (including state_sm)
+    # Removed forced batch_size setting - models should handle batch_size requirements internally if needed
 
     return cfg
 
@@ -182,7 +208,7 @@ def find_latest_checkpoint(output_dir: str) -> Optional[str]:
     
     查找顺序：
     1. 先查找 last.ckpt（如果存在）
-    2. 然后查找 checkpoints/loss/ 和 checkpoints/pcc/ 下最新的 checkpoint
+    2. 然后查找 checkpoints/ 下最新的 checkpoint
     3. 返回最新的 checkpoint 路径
     
     Args:
@@ -202,17 +228,11 @@ def find_latest_checkpoint(output_dir: str) -> Optional[str]:
         log.info(f"Found last.ckpt: {last_ckpt}")
         return last_ckpt
     
-    # 2. 查找 checkpoints/loss/ 下的所有 checkpoint
-    loss_ckpt_dir = os.path.join(output_dir, "checkpoints", "loss")
-    if os.path.exists(loss_ckpt_dir):
-        loss_ckpts = glob.glob(os.path.join(loss_ckpt_dir, "*.ckpt"))
-        checkpoints.extend(loss_ckpts)
-    
-    # 3. 查找 checkpoints/pcc/ 下的所有 checkpoint
-    pcc_ckpt_dir = os.path.join(output_dir, "checkpoints", "pcc")
-    if os.path.exists(pcc_ckpt_dir):
-        pcc_ckpts = glob.glob(os.path.join(pcc_ckpt_dir, "*.ckpt"))
-        checkpoints.extend(pcc_ckpts)
+    # 2. 查找 checkpoints/ 下的所有 checkpoint（现在只有一个统一的目录）
+    ckpt_dir = os.path.join(output_dir, "checkpoints")
+    if os.path.exists(ckpt_dir):
+        ckpts = glob.glob(os.path.join(ckpt_dir, "*.ckpt"))
+        checkpoints.extend(ckpts)
     
     # 4. 查找其他可能的 checkpoint 位置
     for pattern in ["*.ckpt", "checkpoints/**/*.ckpt"]:
@@ -230,18 +250,30 @@ def find_latest_checkpoint(output_dir: str) -> Optional[str]:
 
 def get_auto_experiment_name(cfg: DictConfig, model_name: str) -> str:
     OmegaConf.set_struct(cfg, False)
-    # 生成包含模型名和学习率的 run name
+    # 生成包含模型名、学习率、权重衰减和批大小的 run name
     lr = cfg.get("model", {}).get("lr", "unknown")
-    # 格式化学习率（避免科学计数法）
+    wd = cfg.get("model", {}).get("wd", "unknown")
+    batch_size = cfg.get("data", {}).get("train_batch_size", "unknown")
+
+    # 格式化参数（避免科学计数法）
     if isinstance(lr, float):
         lr_str = f"{lr:.0e}" if lr < 0.01 else f"{lr}"
     else:
         lr_str = str(lr)
-    auto_name = f"{model_name}_lr{lr_str}"
-    
+
+    if isinstance(wd, float):
+        wd_str = f"{wd:.0e}" if wd < 0.01 else f"{wd}"
+    else:
+        wd_str = str(wd)
+
+    batch_size_str = str(batch_size)
+
+    auto_name = f"{model_name}_lr{lr_str}_wd{wd_str}_bs{batch_size_str}"
+
     # 修改配置（在 logger 创建之前）
     OmegaConf.update(cfg, "logger.wandb.name", auto_name, merge=False)
-    log.info("Auto-generated wandb run name: %s (model: %s, lr: %s)", auto_name, model_name, lr_str)
+    log.info("Auto-generated wandb run name: %s (model: %s, lr: %s, wd: %s, bs: %s)",
+             auto_name, model_name, lr_str, wd_str, batch_size_str)
     return auto_name
 
 def train(runtime_context: dict):
@@ -462,7 +494,6 @@ if __name__ == "__main__":
         _PARSER_ARGS.data = None  # avoid double-handling
 
     if getattr(_PARSER_ARGS, "model", None) is not None:
-        _CURRENT_MODEL_NAME = _PARSER_ARGS.model  # Store model name for batch_size auto-adjustment
         hydra_overrides.append(f"model={_PARSER_ARGS.model}")
         _PARSER_ARGS.model = None
 

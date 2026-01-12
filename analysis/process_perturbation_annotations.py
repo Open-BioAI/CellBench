@@ -230,13 +230,13 @@ def main():
     parser.add_argument(
         "--gene-list",
         type=Path,
-        default=Path("/fs-computility-new/upzd_share/maoxinjie/AIVC/data/after_preprocess/perturbation_list/unique_gene_pt.txt"),
+        default=Path("/fs-computility-new/upzd_share/maoxinjie/AIVC/data/perturbation/unique_gene_perturbations.txt"),
         help="Path to gene list file",
     )
     parser.add_argument(
         "--cytokine-list",
         type=Path,
-        default=Path("/fs-computility-new/upzd_share/maoxinjie/AIVC/data/after_preprocess/perturbation_list/unique_env_pt.txt"),
+        default=Path("/fs-computility-new/upzd_share/maoxinjie/AIVC/data/perturbation/unique_cytokine_perturbations.txt"),
         help="Path to cytokine list file",
     )
     parser.add_argument(

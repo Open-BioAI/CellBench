@@ -5,6 +5,8 @@ _target_: perturbench.modelcore.models.GenePert
 # Whether to use pretrained cell embeddings (needed for some transforms)
 use_cell_emb: false
 use_mask: true  # Unified mask switch for training loss and evaluation
+# use_covs is now auto-configured based on data.transform.use_covs
+# use_covs: False
 
 # Path to gene embeddings (GenePT embeddings)
 gene_embedding_path: /fs-computility-new/upzd_share/maoxinjie/AIVC/integrate_perturbench/notebooks/neurips2025/perturbench_data/GenePT_gene_embedding_ada_text.pickle
@@ -24,5 +26,5 @@ lr_scheduler_interval: "epoch"
 lr_scheduler_patience: 15
 lr_scheduler_factor: 0.2
 lr_scheduler_mode: onecycle  # OneCycleLR for better convergence
-lr_scheduler_max_lr: 0.001   # Max learning rate for OneCycleLR
+# lr_scheduler_max_lr: 0.001   # Max learning rate for OneCycleLR
 # lr_scheduler_total_steps: auto-calculated from dataloader size * max_epochs

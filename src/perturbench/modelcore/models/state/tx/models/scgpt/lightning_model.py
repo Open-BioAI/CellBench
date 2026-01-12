@@ -154,7 +154,7 @@ class scGPTForPerturbation(PerturbationModel):
         raise NotImplementedError("Perturb function not supported for scGPT model")
 
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr, weight_decay=self.wd)
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, self.step_size_lr, gamma=0.9)
         return [optimizer], [scheduler]
 

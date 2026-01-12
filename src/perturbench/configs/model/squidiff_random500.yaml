@@ -1,4 +1,4 @@
-_target_: perturbench.modelcore.models.squidiff.Squidiff
+_target_: perturbench.modelcore.models.squidiff_random500.SquidiffRandom500
 z_latent_dim: 60
 cond_hidden: 2048
 cond_dropout: 0.1
@@ -40,6 +40,6 @@ use_pretrained_cell_emb: False
 use_cell_emb: ${.use_pretrained_cell_emb}
 use_mask: true
 
-# Gene selection settings (optional)
-# n_selected_genes: 500  # Randomly select 500 genes for training (comment out to use all genes)
-# gene_selection_seed: 42  # Random seed for gene selection reproducibility
+# Gene selection settings (random selection of 500 genes)
+n_selected_genes: 500  # Randomly select 500 genes for training
+gene_selection_seed: 42  # Random seed for gene selection reproducibility

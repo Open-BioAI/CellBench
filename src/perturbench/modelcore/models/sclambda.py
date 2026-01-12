@@ -45,6 +45,7 @@ class scLAMBDA(PerturbationModel):
         self,
         gene_embedding_path: str | None = None,
         use_mask: bool = False,  # Unified mask switch for training loss and evaluation
+        use_covs: bool = False,  # Unified covariate usage parameter
         latent_dim: int = 30,
         hidden_dim: int = 512,
         lambda_MI: float = 200.0,
@@ -88,6 +89,13 @@ class scLAMBDA(PerturbationModel):
             perturbation_control_value: Control condition name
             seed: Random seed (handled by PyTorch Lightning, included for compatibility)
         """
+
+        # Auto-configure covariate usage based on data transform's use_covs setting or parameter
+        if hasattr(datamodule.train_dataset.transform, 'use_covs') and datamodule.train_dataset.transform.use_covs:
+            # If data transform enables covariates, automatically enable covariate injection
+            use_covs = True
+
+        self.use_covs = use_covs
 
         super(scLAMBDA, self).__init__(
             datamodule=datamodule,
@@ -146,12 +154,21 @@ class scLAMBDA(PerturbationModel):
             # Add control embedding (zeros)
             self.gene_emb[perturbation_control_value] = np.zeros(self.p_dim)
 
+        # Adjust p_dim if covariates are used (covariates get concatenated to p for encoder input)
+        p_dim_encoder = self.p_dim
+        if self.use_covs and hasattr(self, 'cov_dims') and self.cov_dims:
+            p_dim_encoder += sum(self.cov_dims.values())
+
+        # Store original p_dim for decoder output
+        self.p_dim_original = self.p_dim
+
         # Initialize network
         self.Net = scLAMBDANet(
             x_dim=self.n_genes,
-            p_dim=self.p_dim,
+            p_dim=p_dim_encoder,  # Encoder input dimension (includes covariates)
             latent_dim=self.latent_dim,
-            hidden_dim=self.hidden_dim
+            hidden_dim=self.hidden_dim,
+            p_dim_decoder=self.p_dim_original  # Decoder output dimension (original p_dim)
         )
 
         # Control statistics (will be computed in setup())
@@ -278,19 +295,36 @@ class scLAMBDA(PerturbationModel):
             pert_names = batch.perturbation
             p = self._compute_perturbation_embedding(pert_names)  # [batch_size, p_dim]
 
-        return x, p, pert_names
+        # Get covariates if enabled
+        covariates = None
+        if self.use_covs and hasattr(self, 'cov_keys') and self.cov_keys:
+            covariates = {cov_key: batch[cov_key] for cov_key in self.cov_keys if cov_key in batch}
 
-    def forward(self, x: torch.Tensor, p: torch.Tensor):
+        return x, p, pert_names, covariates
+
+    def forward(self, x: torch.Tensor, p: torch.Tensor, covariates: dict[str, torch.Tensor] | None = None):
         """
         Forward pass through scLAMBDA network.
 
         Args:
             x: Gene expression [batch_size, n_genes]
             p: Perturbation embeddings [batch_size, p_dim]
+            covariates: Dictionary of covariate tensors (optional)
 
         Returns:
             Dictionary with network outputs
         """
+        # Store original p for loss computation (before covariates are added)
+        p_original = p.clone()  # Clone to ensure it's not affected by subsequent modifications
+
+        # Handle covariates if enabled and provided
+        if self.use_covs and covariates:
+            # Concatenate all covariate embeddings to perturbation embeddings
+            cov_tensors = [cov for cov in covariates.values() if cov is not None and len(cov) > 0]
+            if cov_tensors:
+                merged_covariates = torch.cat(cov_tensors, dim=-1)
+                p = torch.cat([p, merged_covariates], dim=-1)
+
         # Center by control mean
         x_centered = x - self.ctrl_mean.unsqueeze(0)
 
@@ -300,6 +334,7 @@ class scLAMBDA(PerturbationModel):
         return {
             "x_hat": x_hat,
             "p_hat": p_hat,
+            "p_original": p_original,
             "mean_z": mean_z,
             "log_var_z": log_var_z,
             "s": s,
@@ -394,7 +429,7 @@ class scLAMBDA(PerturbationModel):
         # Get optimizers
         optimizer_main, optimizer_MINE = self.optimizers()
 
-        x, p, _ = self.unpack_batch(batch)
+        x, p, _, covariates = self.unpack_batch(batch)
 
         # Get expression mask if available - use unified method from base class
         mask = self._get_mask(batch)
@@ -406,7 +441,7 @@ class scLAMBDA(PerturbationModel):
         self.Net.eval()
 
         with torch.enable_grad():
-            outputs = self.forward(x, p_for_adv)
+            outputs = self.forward(x, p_for_adv, covariates)
             recon_loss = self.loss_recon(outputs["x_centered"], outputs["x_hat"], mask=mask)
             grads = torch.autograd.grad(recon_loss, p_for_adv, create_graph=False, retain_graph=False)[0]
             p_ae = p_for_adv + self.eps * torch.norm(p_for_adv, dim=1, keepdim=True) * torch.sign(grads.data)
@@ -417,7 +452,7 @@ class scLAMBDA(PerturbationModel):
 
         # Forward pass with adversarial perturbations
         self.Net.train()
-        outputs = self.forward(x, p_ae)
+        outputs = self.forward(x, p_ae, covariates)
 
         # Sample marginal perturbations for MINE
         batch_size = x.shape[0]
@@ -440,7 +475,7 @@ class scLAMBDA(PerturbationModel):
         losses = self.loss_function(
             x=outputs["x_centered"],
             x_hat=outputs["x_hat"],
-            p=p_target,
+            p=outputs["p_original"],
             p_hat=outputs["p_hat"],
             mean_z=outputs["mean_z"],
             log_var_z=outputs["log_var_z"],
@@ -491,13 +526,18 @@ class scLAMBDA(PerturbationModel):
         """Validation step."""
         # Unpack batch
         batch,_=data_tuple
-        x, p, _ = self.unpack_batch(batch)
+        x, p, _, _ = self.unpack_batch(batch)
 
         # Get expression mask if available - use unified method from base class
         mask = self._get_mask(batch)
 
+        # Get covariates if enabled
+        covariates_val = None
+        if self.use_covs and hasattr(self, 'cov_keys') and self.cov_keys:
+            covariates_val = {cov_key: batch[cov_key] for cov_key in self.cov_keys if cov_key in batch}
+
         # Forward pass
-        outputs = self.forward(x, p)
+        outputs = self.forward(x, p, covariates_val)
 
         # Sample marginal perturbations
         batch_size = x.shape[0]
@@ -508,7 +548,7 @@ class scLAMBDA(PerturbationModel):
         losses = self.loss_function(
             x=outputs["x_centered"],
             x_hat=outputs["x_hat"],
-            p=p,
+            p=outputs["p_original"],
             p_hat=outputs["p_hat"],
             mean_z=outputs["mean_z"],
             log_var_z=outputs["log_var_z"],
@@ -542,7 +582,15 @@ class scLAMBDA(PerturbationModel):
         self.Net.eval()
 
         # Unpack batch
-        x, p, _ = self.unpack_batch(batch)
+        x, p, _, covariates = self.unpack_batch(batch)
+
+        # Handle covariates if enabled and provided (same as forward method)
+        if self.use_covs and covariates:
+            # Concatenate all covariate embeddings to perturbation embeddings
+            cov_tensors = [cov for cov in covariates.values() if cov is not None and len(cov) > 0]
+            if cov_tensors:
+                merged_covariates = torch.cat(cov_tensors, dim=-1)
+                p = torch.cat([p, merged_covariates], dim=-1)
 
         # Use control expression if available, otherwise use batch expression
         ctrl_values = getattr(batch, "controls", None)

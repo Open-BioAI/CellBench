@@ -16,6 +16,7 @@ class GenePert(PerturbationModel):
             hidden_size: int = 128,
             use_cell_emb: bool = False,
             use_mask: bool = False,  # Unified mask switch for training loss and evaluation
+            use_covs: bool = False,  # Unified covariate usage parameter
             lr: float = 1e-3,
             wd: float = 1e-5,
             lr_scheduler_freq: int | None = None,
@@ -28,6 +29,11 @@ class GenePert(PerturbationModel):
             datamodule: L.LightningDataModule | None = None,
             **kwargs
     ):
+        # Auto-configure covariate usage based on data transform's use_covs setting or parameter
+        if hasattr(datamodule.train_dataset.transform, 'use_covs') and datamodule.train_dataset.transform.use_covs:
+            # If data transform enables covariates, automatically enable covariate injection
+            use_covs = True
+
         super(GenePert, self).__init__(
             datamodule=datamodule,
             lr=lr,
@@ -45,6 +51,7 @@ class GenePert(PerturbationModel):
 
         self.hidden_size = hidden_size
         self.use_cell_emb = use_cell_emb
+        self.use_covs = use_covs
 
         # Perturbation encoder / embedding dimension setup
         self.pert_encoder = None
@@ -59,24 +66,19 @@ class GenePert(PerturbationModel):
         else:
             self.embedding_dim = self.datamodule.train_dataset.transform.embedding_dim
 
+        # Calculate total input dimension including covariates
+        total_input_dim = self.embedding_dim
+        if self.use_covs and hasattr(self, 'cov_dims') and self.cov_dims:
+            total_input_dim += sum(self.cov_dims.values())
+
         # Initialize MLP model
         self.mlp = GenePertMLP(
-            input_dim=self.embedding_dim,
+            input_dim=total_input_dim,
             output_dim=self.n_genes,
             hidden_size=self.hidden_size
         )
-
-        self._compute_ctrl_mean()
-
-    def _compute_ctrl_mean(self):
-        """Compute mean control expression from training data."""
-        train_ctrl_mean=torch.tensor(self.datamodule.train_dataset.control_adata.X.mean(axis=0))
-        val_ctrl_mean = torch.tensor(self.datamodule.val_dataset.control_adata.X.mean(axis=0))
-        test_ctrl_mean = torch.tensor(self.datamodule.test_dataset.control_adata.X.mean(axis=0))
-
-        self.register_buffer("train_ctrl_mean", train_ctrl_mean)
-        self.register_buffer("val_ctrl_mean", val_ctrl_mean)
-        self.register_buffer("test_ctrl_mean", test_ctrl_mean)
+        # Note: No ctrl_mean buffers needed - we predict full expression values directly
+        # This matches the official GenePert implementation
 
     def _encode_perturbation(self, batch) -> torch.Tensor:
         """Encode perturbation signals from the batch."""
@@ -84,19 +86,31 @@ class GenePert(PerturbationModel):
             return self.pert_encoder(batch)
         return batch["pert_emb"]
 
-    def forward(self, perturbation_embeddings: torch.Tensor) -> torch.Tensor:
+    def forward(self, perturbation_embeddings: torch.Tensor, covariates: dict[str, torch.Tensor] | None = None) -> torch.Tensor:
         """
         Forward pass through the model.
 
         Args:
             perturbation_embeddings: Tensor of shape [batch_size, embedding_dim]
+            covariates: Dictionary of covariate tensors (optional)
 
         Returns:
-            Predicted gene expression delta [batch_size, n_genes]
+            Predicted gene expression values [batch_size, n_genes]
         """
-        # MLP predicts the delta (change from control)
-        delta = self.mlp(perturbation_embeddings)
-        return delta
+        # Start with perturbation embeddings
+        combined_input = perturbation_embeddings
+
+        # Add covariates if enabled and provided
+        if self.use_covs and covariates:
+            # Concatenate all covariate embeddings
+            cov_tensors = [cov for cov in covariates.values() if cov is not None and len(cov) > 0]
+            if cov_tensors:
+                merged_covariates = torch.cat(cov_tensors, dim=-1)
+                combined_input = torch.cat([combined_input, merged_covariates], dim=-1)
+
+        # MLP predicts the full expression values (like official GenePert)
+        predicted_expression = self.mlp(combined_input)
+        return predicted_expression
 
     def training_step(self, batch, batch_idx):
         """
@@ -110,41 +124,41 @@ class GenePert(PerturbationModel):
             Training loss
         """
 
-        # Get observed expression and perturbation names
+        # Get observed expression (target is full expression values)
         observed_expression = batch['pert_cell_counts']
 
         # Get perturbation embeddings
         pert_embeddings = self._encode_perturbation(batch)
 
-        # Forward pass: predict delta from control
-        predicted_delta = self.forward(pert_embeddings)
+        # Get covariates if enabled
+        covariates = None
+        if self.use_covs and hasattr(self, 'cov_keys') and self.cov_keys:
+            covariates = {cov_key: batch[cov_key] for cov_key in self.cov_keys if cov_key in batch}
 
-        # Compute target delta (observed - control mean)
-        target_delta = observed_expression - self.train_ctrl_mean.unsqueeze(0)
+        # Forward pass: predict full expression values directly
+        predicted_expression = self.forward(pert_embeddings, covariates)
 
         # Use expression mask for loss calculation - only compute loss on expressed genes
         mask = self._get_mask(batch)
         if mask is not None:
-            mask = mask.to(predicted_delta.device)
+            mask = mask.to(predicted_expression.device)
             masked_loss = F.mse_loss(
-                predicted_delta,
-                target_delta,
+                predicted_expression,
+                observed_expression,
                 reduction="none",
             )
-            # 这样才算给每个batch上有效gene算好mse_loss以后在batch上求平均
-            valid = mask.sum(dim=1)  # 指定维度[batch]
+            # Compute per-batch loss on valid genes only
+            valid = mask.sum(dim=1)  # [batch]
             loss_per_batch = (masked_loss * mask).sum(dim=1)  # [batch]
             loss = (loss_per_batch / valid).nanmean()
         else:
             # Fallback to standard MSE
-            loss = F.mse_loss(predicted_delta, target_delta)
+            loss = F.mse_loss(predicted_expression, observed_expression)
 
         self.log("train_loss", loss, prog_bar=True, logger=True, batch_size=len(batch), on_step=True, on_epoch=True)
 
-        # Compute training PCC (use mask if enabled)
-        # predictions = delta + ctrl_mean, observed = observed_expression
-        predictions = predicted_delta + self.train_ctrl_mean.unsqueeze(0)
-        train_pcc = self._compute_masked_pcc(predictions, observed_expression, mask)
+        # Compute training PCC
+        train_pcc = self._compute_masked_pcc(predicted_expression, observed_expression, mask)
         self.log("train_PCC", train_pcc, prog_bar=True, logger=True, batch_size=len(batch), on_step=True, on_epoch=True)
 
         return loss
@@ -160,26 +174,28 @@ class GenePert(PerturbationModel):
         Returns:
             Validation loss
         """
-        batch,_=data_tuple
-        # Get observed expression and perturbation names
+        batch, _ = data_tuple
+        # Get observed expression (target is full expression values)
         observed_expression = batch['pert_cell_counts']
 
         # Get perturbation embeddings
         pert_embeddings = self._encode_perturbation(batch)
 
-        # Forward pass: predict delta from control
-        predicted_delta = self.forward(pert_embeddings)
+        # Get covariates if enabled
+        covariates = None
+        if self.use_covs and hasattr(self, 'cov_keys') and self.cov_keys:
+            covariates = {cov_key: batch[cov_key] for cov_key in self.cov_keys if cov_key in batch}
 
-        # Compute target delta
-        target_delta = observed_expression - self.val_ctrl_mean.unsqueeze(0)
+        # Forward pass: predict full expression values directly
+        predicted_expression = self.forward(pert_embeddings, covariates)
 
-        # Use expression mask for loss calculation - only compute loss on expressed genes
+        # Use expression mask for loss calculation
         mask = self._get_mask(batch)
         if mask is not None:
-            mask = mask.to(predicted_delta.device)
+            mask = mask.to(predicted_expression.device)
             masked_loss = F.mse_loss(
-                predicted_delta,
-                target_delta,
+                predicted_expression,
+                observed_expression,
                 reduction="none",
             )
             valid = mask.sum(dim=1)
@@ -187,23 +203,36 @@ class GenePert(PerturbationModel):
             loss = (loss_per_batch / valid).nanmean()
         else:
             # Fallback to standard MSE
-            loss = F.mse_loss(predicted_delta, target_delta)
+            loss = F.mse_loss(predicted_expression, observed_expression)
 
         self.log("val_loss", loss, prog_bar=True, logger=True, batch_size=len(batch), on_step=True, on_epoch=True)
 
-        # Compute validation PCC (use mask if enabled)
-        predictions = predicted_delta + self.val_ctrl_mean.unsqueeze(0)
-        val_pcc = self._compute_masked_pcc(predictions, observed_expression, mask)
+        # Compute validation PCC
+        val_pcc = self._compute_masked_pcc(predicted_expression, observed_expression, mask)
         self.log("val_PCC", val_pcc, prog_bar=True, logger=True, batch_size=len(batch), on_step=True, on_epoch=True)
 
         return loss
 
-    def predict(self,batch):
+    def predict(self, batch):
+        """
+        Predict gene expression for a batch.
+
+        Args:
+            batch: Input batch with perturbation info
+
+        Returns:
+            Predicted gene expression values [batch_size, n_genes]
+        """
         # Get perturbation embeddings
         pert_embeddings = self._encode_perturbation(batch)
 
-        # Forward pass: predict delta from control
-        predicted_delta = self.forward(pert_embeddings)
+        # Get covariates if enabled
+        covariates = None
+        if self.use_covs and hasattr(self, 'cov_keys') and self.cov_keys:
+            covariates = {cov_key: batch[cov_key] for cov_key in self.cov_keys if cov_key in batch}
 
-        preds = predicted_delta + batch['control_cell_counts']
-        return preds
+        # Forward pass: predict full expression values directly
+        predicted_expression = self.forward(pert_embeddings, covariates)
+
+        return predicted_expression
+

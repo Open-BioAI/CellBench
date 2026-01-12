@@ -5,6 +5,8 @@ _target_: perturbench.modelcore.models.scLAMBDA
 # Model architecture
 use_cell_emb: false
 use_mask: true  # Unified mask switch for training loss and evaluation
+# use_covs is now auto-configured based on data.transform.use_covs
+# use_covs: False
 gene_embedding_path: /fs-computility-new/upzd_share/maoxinjie/AIVC/integrate_perturbench/notebooks/neurips2025/perturbench_data/GenePT_gene_embedding_ada_text.pickle
 
 # Network dimensions
@@ -21,7 +23,7 @@ wd: 1e-4
 lr_step_size: 30
 lr_gamma: 0.2
 lr_scheduler_mode: onecycle  # Options: "onecycle", "plateau", or null/step (default: StepLR with step_size=30, gamma=0.2)
-lr_scheduler_max_lr: 0.001   # Max learning rate for OneCycleLR (only used when mode=onecycle)
+# lr_scheduler_max_lr: 0.001   # Max learning rate for OneCycleLR (only used when mode=onecycle)
 # lr_scheduler_total_steps: auto-calculated from dataloader size * max_epochs
 
 # Perturbation settings

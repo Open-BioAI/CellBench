@@ -17,7 +17,8 @@ class scLAMBDANet(nn.Module):
         x_dim: int,
         p_dim: int,
         latent_dim: int = 30,
-        hidden_dim: int = 512
+        hidden_dim: int = 512,
+        p_dim_decoder: int = None
     ):
         super(scLAMBDANet, self).__init__()
 
@@ -44,10 +45,12 @@ class scLAMBDANet(nn.Module):
             hidden_dim=hidden_dim,
             output_dim=x_dim
         )
+        # Use p_dim_decoder for decoder output dimension, default to p_dim if not specified
+        p_dim_decoder = p_dim_decoder if p_dim_decoder is not None else p_dim
         self.Decoder_p = Decoder(
             latent_dim=latent_dim,
             hidden_dim=hidden_dim,
-            output_dim=p_dim
+            output_dim=p_dim_decoder
         )
 
         # MINE for mutual information estimation

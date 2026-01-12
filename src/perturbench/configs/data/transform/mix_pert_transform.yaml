@@ -15,6 +15,6 @@ cov_maps_path: ${paths.work_dir}/cov_maps.pt
 
 null_token: '' #空缺的扰动值用什么代替就填什么
 # use_covs: ${model.inject_covariates_encoder} #从所选的模型yaml配置同步参数
-use_covs: false
+use_covs: ${data.transform.use_covs}
 use_cell_emb: ${model.use_cell_emb}  #是否使用预训练细胞嵌入
 comb_delim: ${data.perturbation_combination_delimiter}

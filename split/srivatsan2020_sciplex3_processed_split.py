@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """
-针对 SrivatsanTrapnell2020_sciplex3_processed.h5ad 添加 split 列到 obs。
+针对 SrivatsanTrapnell2020_sciplex3_processed.h5ad 添加 split 列和 CRISPR 列到 obs。
 
 流程：
 1. 读取 SrivatsanTrapnell2020_sciplex3_processed.h5ad
-2. 在该数据集上：
+2. 添加 CRISPR 列到 obs（通过命令行参数指定）
+3. 在该数据集上：
    - 所有 cell_cluster == "MCF7" 或 "A549" 的细胞设为 train
    - 所有 cell_cluster == "K562" 的细胞，在内部随机 1:1 划分为 val / test
-3. 按 (gene_pt, drug_pt, env_pt) 构建 perturbation 组合，只保留在 train 中出现过的组合在 val/test 中的细胞
-4. 对 train 中的 perturbed cells (control==False) 进行上采样，少数类上采样到多数类数量（replace=True），多数类不变
-5. 在 adata.obs 中添加 'split' 列，保存为新的 h5ad 文件
+4. 按 (gene_pt, drug_pt, env_pt) 构建 perturbation 组合，只保留在 train 中出现过的组合在 val/test 中的细胞
+5. 对 train 中的 perturbed cells (control==False) 进行上采样，少数类上采样到多数类数量（replace=True），多数类不变
+6. 在 adata.obs 中添加 'split' 列，保存为新的 h5ad 文件
 """
 
 import argparse
@@ -57,11 +58,11 @@ def build_pert_key(
 
 # 默认输入文件
 DEFAULT_H5AD = Path(
-    "/fs-computility-new/upzd_share/shared/AIVC_data/processed_control/after_preprocess/SrivatsanTrapnell2020_sciplex3_processed.h5ad"
+    "/fs-computility-new/upzd_share/shared/AIVC_data/processed_control/srivatsan/after_processed/sciplex3_highdose_processed.h5ad"
 )
 # 输出到 SrivatsanTrapnell2020_sciplex3 目录
 DEFAULT_OUTPUT = Path(
-    "/fs-computility-new/upzd_share/maoxinjie/AIVC/mxj/perturbench-main/data/sciplex3_original.h5ad"
+    "/fs-computility-new/upzd_share/maoxinjie/AIVC/mxj/perturbench-main/data/sciplex3_highdose.h5ad"
 )
 CELL_CLUSTER_COL = "cell_cluster"
 
@@ -163,11 +164,16 @@ def create_processed_split(
     env_pt_col: str = "env_pt",
     control_col: str = "control",
     enable_resampling: bool = True,
+    crispr_value: str = "",
 ) -> None:
     print(f"Loading h5ad file: {h5ad_path}")
     adata = sc.read_h5ad(h5ad_path)
     obs = adata.obs
     print(f"  Shape: {adata.shape}")
+
+    # 添加 CRISPR 列到 obs
+    obs['CRISPR'] = crispr_value
+    print(f"Added CRISPR column with value: '{crispr_value}'")
 
     # 新建 cell_cluster 列：优先选取 cell_line，如果没有就用 celltype
     if 'cell_line' in obs.columns:
@@ -371,10 +377,11 @@ def create_processed_split(
 def main():
     parser = argparse.ArgumentParser(
         description=(
-            "Add 'split' column to obs in SrivatsanTrapnell2020_sciplex3_processed.h5ad:\n"
-            "1) MCF7/A549 -> train, K562 -> val/test 1:1 within K562\n"
-            "2) Remove val/test cells whose (gene_pt, drug_pt, env_pt) combination is unseen in train.\n"
-            "3) Upsample train perturbed cells (minority class to majority class count)."
+            "Add 'split' and 'CRISPR' columns to obs in SrivatsanTrapnell2020_sciplex3_processed.h5ad:\n"
+            "1) Add CRISPR column with specified value\n"
+            "2) MCF7/A549 -> train, K562 -> val/test 1:1 within K562\n"
+            "3) Remove val/test cells whose (gene_pt, drug_pt, env_pt) combination is unseen in train.\n"
+            "4) Upsample train perturbed cells (minority class to majority class count)."
         )
     )
     parser.add_argument(
@@ -400,6 +407,12 @@ def main():
         action="store_true",
         help="Disable resampling of train perturbed cells.",
     )
+    parser.add_argument(
+        "--crispr",
+        type=str,
+        default="",
+        help="Value to set for the CRISPR column in obs (default: empty string).",
+    )
     args = parser.parse_args()
 
     create_processed_split(
@@ -407,6 +420,7 @@ def main():
         output_h5ad_path=args.output_h5ad,
         seed=args.seed,
         enable_resampling=not args.disable_resampling,
+        crispr_value=args.crispr,
     )
 
 

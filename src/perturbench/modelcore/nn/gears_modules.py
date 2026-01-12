@@ -57,6 +57,9 @@ class GEARS_Model(torch.nn.Module):
         self.no_perturb = args['no_perturb']
         self.pert_emb_lambda = 0.2
 
+        # Covariate projection layer (initialized later if needed)
+        self.cov_proj = None
+
         # perturbation positional embedding added only to the perturbed genes
         self.pert_w = nn.Linear(1, hidden_size)
 
@@ -127,6 +130,7 @@ class GEARS_Model(torch.nn.Module):
         """
 
         x, pert_idx = data['x'], data['pert_idx']
+        covariates = data.get('covariates', None)
         if self.no_perturb:
             out = x.reshape(-1, 1)
             out = torch.split(torch.flatten(out), self.num_genes)
@@ -153,6 +157,20 @@ class GEARS_Model(torch.nn.Module):
 
             base_emb = base_emb + 0.2 * pos_emb
             base_emb = self.emb_trans_v2(base_emb)
+
+            # Add covariates if provided
+            if covariates is not None and hasattr(self, 'cov_proj') and self.cov_proj is not None:
+                # Expand covariates to match gene embedding dimensions
+                # covariates shape: [batch_size, cov_dim]
+                # base_emb shape: [batch_size * num_genes, emb_dim]
+                covariates_expanded = covariates.unsqueeze(1).repeat(1, self.num_genes, 1)  # [batch_size, num_genes, cov_dim]
+                covariates_flat = covariates_expanded.reshape(-1, covariates.size(-1))  # [batch_size * num_genes, cov_dim]
+
+                # Concatenate covariates with base embeddings
+                combined_emb = torch.cat([base_emb, covariates_flat], dim=-1)
+
+                # Project back to original embedding dimension
+                base_emb = self.cov_proj(combined_emb)
 
             ## get perturbation index and embeddings
 

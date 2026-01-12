@@ -64,7 +64,7 @@ class ConditionEncoder(nn.Module):
 #pert_cell_counts
 #b
 
-class Squidiff(PerturbationModel):
+class SquidiffRandom500(PerturbationModel):
     def __init__(
         self,
         z_latent_dim: int = 60,
@@ -102,7 +102,7 @@ class Squidiff(PerturbationModel):
         use_pretrained_cell_emb:bool= False,
         use_cell_emb: bool | None = None,
         use_mask: bool = False,  # 控制是否使用mask计算loss，默认不启用
-        n_selected_genes: int | None = None,  # 随机选择指定数量的基因，None表示使用所有基因
+        n_selected_genes: int | None = 500,  # 随机选择指定数量的基因，默认500基因
         gene_selection_seed: int = 42,  # 基因选择的随机种子
         datamodule: Optional[L.LightningDataModule] = None,
     ):
@@ -129,11 +129,12 @@ class Squidiff(PerturbationModel):
         self.use_pretrained_cell_emb = use_pretrained_cell_emb if use_cell_emb is None else use_cell_emb
         self.use_cell_emb = self.use_pretrained_cell_emb
 
-        # Handle gene selection
-        self.n_selected_genes = n_selected_genes
+        # Handle gene selection - default to 500 genes for random selection
+        self.n_selected_genes = n_selected_genes if n_selected_genes is not None else 500
         self.gene_selection_seed = gene_selection_seed
         if n_selected_genes is not None:
             # Randomly select genes
+            import numpy as np
             np.random.seed(gene_selection_seed)
             all_gene_indices = np.arange(self.n_genes)
             self.selected_gene_indices = np.random.choice(all_gene_indices, size=n_selected_genes, replace=False)
@@ -385,7 +386,7 @@ class Squidiff(PerturbationModel):
 
     def configure_optimizers(self):
         """
-        Optimizer + scheduler settings for Squidiff.
+        Optimizer + scheduler settings for SquidiffRandom500.
         Supports multiple scheduler modes: onecycle, step, or plateau (default).
         """
 

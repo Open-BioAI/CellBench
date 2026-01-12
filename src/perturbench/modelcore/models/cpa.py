@@ -57,7 +57,7 @@ class CPA(PerturbationModel):
             adv_steps: int = 7,
             n_warmup_epochs: int = 5,
             use_adversary: bool = True,
-            use_covariates: bool = True,
+            use_covs: bool = True,  # Unified covariate usage parameter
             softplus_output: bool = False,
             elementwise_affine: bool = False,
             datamodule: L.LightningDataModule | None = None,
@@ -91,7 +91,7 @@ class CPA(PerturbationModel):
             adv_steps: Number of adversarial steps.
             n_warmup_epochs: Number of warmup epochs for the autoencoder
             use_adversary: Whether to use the adversarial component.
-            use_covariates: Whether to use additive covariate conditioning.
+            use_covs: Whether to use additive covariate conditioning.
             softplus_output: Whether to apply a softplus activation to the output.
             elementwise_affine: Whether to use elementwise affine in the layer norms
         """
@@ -142,7 +142,11 @@ class CPA(PerturbationModel):
         self.use_adversary = use_adversary
         # Only enable covariates if the transform actually provides maps
         transform_has_covs = hasattr(datamodule.train_dataset.transform, "cov_maps")
-        self.use_covariates = use_covariates and transform_has_covs
+        # Auto-configure covariate usage based on data transform's use_covs setting or parameter
+        if hasattr(datamodule.train_dataset.transform, 'use_covs') and datamodule.train_dataset.transform.use_covs:
+            # If data transform enables covariates, automatically enable covariate usage
+            use_covs = True
+        self.use_covs = use_covs and transform_has_covs
         # add decoder_distribution
         self.decoder_distribution = decoder_distribution
 
@@ -154,7 +158,7 @@ class CPA(PerturbationModel):
             dropout=self.dropout,
         )
 
-        if self.use_covariates:
+        if self.use_covs:
             self.covars_encoder = getattr(datamodule.train_dataset.transform, "cov_maps", {})
 
         else:
@@ -200,7 +204,7 @@ class CPA(PerturbationModel):
             elementwise_affine=elementwise_affine,
         )
 
-        if self.use_covariates:
+        if self.use_covs:
             self.covars_embeddings = nn.ModuleDict(
                 {
                     key: MLP(

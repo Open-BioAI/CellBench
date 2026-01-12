@@ -4,6 +4,7 @@ from .gears import  GEARS
 from .genepert import GenePert
 from .sclambda import scLAMBDA
 from .squidiff import Squidiff
+from .squidiff_random500 import SquidiffRandom500
 from .latent_additive import LatentAdditive
 from .linear_additive import LinearAdditive
 from .decoder_only import DecoderOnly

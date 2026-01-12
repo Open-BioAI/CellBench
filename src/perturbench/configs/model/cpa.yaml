@@ -27,7 +27,7 @@ n_warmup_epochs: 5
 lr_scheduler_patience: 1
 lr_scheduler_factor: 0.2
 lr_scheduler_mode: onecycle  # OneCycleLR for better convergence
-lr_scheduler_max_lr: 0.001   # Max learning rate (higher than initial)
+# lr_scheduler_max_lr: auto-calculated as lr * 10 (default)
 # lr_scheduler_total_steps: auto-calculated from dataloader size * max_epochs
 softplus_output: False
 elementwise_affine: False

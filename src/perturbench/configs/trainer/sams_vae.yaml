@@ -7,19 +7,17 @@ max_epochs: 500
 
 accelerator: gpu
 devices: 1
-# Use 2 GPUs for training
-# devices: [0]
-# strategy: auto  # 单GPU训练使用auto策略（默认）
 
-# mixed precision for extra speed-up (disabled for single GPU to avoid scaler issues)
 precision: 32
 
 # perform a validation loop every N training epochs
 check_val_every_n_epoch: 1
 
-# set True to to ensure deterministic results
-# makes training slower but gives more reproducibility than just setting seeds
 deterministic: False
 
 # log every N steps
 log_every_n_steps: 10
+
+# Gradient clipping to prevent exploding gradients in VAE
+gradient_clip_val: 1.0
+gradient_clip_algorithm: norm

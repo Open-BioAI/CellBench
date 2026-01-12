@@ -3,4 +3,6 @@ _partial_: true
 pert_map_path: ${paths.work_dir}/state_pert_map.pt
 pert_key: ${data.pert_key}
 embedding_key: ${data.embedding_key}
-perturbation_combination_delimiter: ${data.perturbation_combination_delimiter} 
+perturbation_combination_delimiter: ${data.perturbation_combination_delimiter}
+use_covs: ${data.transform.use_covs}
+cov_keys: ${data.cov_keys} 

@@ -201,7 +201,7 @@ class PerturbMeanPerturbationModel(PerturbationModel):
         Return an optimizer for our dummy_param if desired, or None if we prefer no updates.
         """
         if len(list(self.parameters())) > 0:
-            return torch.optim.Adam(self.parameters(), lr=self.lr)
+            return torch.optim.Adam(self.parameters(), lr=self.lr, weight_decay=self.wd)
         return None
 
     def training_step(self, batch, batch_idx):

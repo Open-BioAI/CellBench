@@ -49,7 +49,7 @@ class DecoderOnly(PerturbationModel):
         n_layers=2,
         encoder_width=128,
         softplus_output=True,
-        use_covariates=True,
+        use_covs: bool = False,  # Unified covariate usage parameter
         use_perturbations=True,
         use_mask: bool = False,  # Unified mask switch for training loss and evaluation
         lr: float | None = None,
@@ -98,9 +98,14 @@ class DecoderOnly(PerturbationModel):
         )
         self.save_hyperparameters(ignore=["datamodule"])
 
-        if not (use_covariates or use_perturbations):
+        # Auto-configure covariate usage based on data transform's use_covs setting or parameter
+        if hasattr(datamodule.train_dataset.transform, 'use_covs') and datamodule.train_dataset.transform.use_covs:
+            # If data transform enables covariates, automatically enable covariate usage
+            use_covs = True
+
+        if not (use_covs or use_perturbations):
             raise ValueError(
-                "'use_covariates' and 'use_perturbations' can not both be false. Either covariates or perturbations have to be used."
+                "'use_covs' and 'use_perturbations' can not both be false. Either covariates or perturbations have to be used."
             )
 
 
@@ -114,16 +119,16 @@ class DecoderOnly(PerturbationModel):
                 final_embed_dim=n_perts,
             )
 
-        if use_covariates and use_perturbations:
+        if use_covs and use_perturbations:
             decoder_input_dim = n_total_covariates + n_perts
-        elif use_covariates:
+        elif use_covs:
             decoder_input_dim = n_total_covariates
         else:
             decoder_input_dim = n_perts
 
         self.decoder = MLP(decoder_input_dim, encoder_width, self.n_genes, n_layers)
         self.softplus_output = softplus_output
-        self.use_covariates = use_covariates
+        self.use_covs = use_covs
         self.use_perturbations = use_perturbations
 
     def _get_control_expression(self, batch: Batch) -> torch.Tensor:
@@ -144,10 +149,10 @@ class DecoderOnly(PerturbationModel):
         perturbation: torch.Tensor,
         covariates: dict[str, torch.Tensor],
     ):
-        if self.use_covariates and self.use_perturbations:
+        if self.use_covs and self.use_perturbations:
             embedding = torch.cat([cov for cov in covariates.values()], dim=1)
             embedding = torch.cat([perturbation, embedding], dim=1)
-        elif self.use_covariates:
+        elif self.use_covs:
             embedding = torch.cat([cov for cov in covariates.values()], dim=1)
         elif self.use_perturbations:
             embedding = perturbation

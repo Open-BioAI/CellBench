@@ -33,8 +33,7 @@ class LatentAdditive(PerturbationModel):
         dropout: float | None = None,
         softplus_output: bool = True,
         sparse_additive_mechanism: bool = False,
-        inject_covariates_encoder: bool = False,
-        inject_covariates_decoder: bool = False,
+        use_covs: bool = False,  # Unified covariate usage parameter
         datamodule: L.LightningDataModule | None = None,
     ) -> None:
         """
@@ -64,10 +63,7 @@ class LatentAdditive(PerturbationModel):
             dropout: Dropout rate or None for no dropout.
             softplus_output: Whether to apply a softplus activation to the
                 output of the decoder to enforce non-negativity
-            inject_covariates_encoder: Whether to condition the encoder on
-                covariates
-            inject_covariates_decoder: Whether to condition the decoder on
-                covariates
+            use_covs: Whether to use covariates in both encoder and decoder
             datamodule: The datamodule used to train the model
         """
         super(LatentAdditive, self).__init__(
@@ -86,19 +82,25 @@ class LatentAdditive(PerturbationModel):
             use_mask=use_mask,  # Pass use_mask to base class
         )
 
+        # Auto-configure covariate usage based on data transform's use_covs setting or parameter
+        if hasattr(datamodule.train_dataset.transform, 'use_covs') and datamodule.train_dataset.transform.use_covs:
+            # If data transform enables covariates, automatically enable covariate injection
+            use_covs = True
+
+        self.use_covs = use_covs
         self.save_hyperparameters(ignore=["datamodule"])
 
-        n_total_covariates = sum([dim for dim in datamodule.train_dataset.transform.cov_dims.values()])
+        n_total_covariates = sum([dim for dim in datamodule.train_dataset.transform.cov_dims.values()]) if hasattr(datamodule.train_dataset.transform, 'cov_dims') else 0
         self.use_cell_emb = use_cell_emb
 
         self.n_input_features=self.embedding_dim if use_cell_emb else self.n_genes
         encoder_input_dim = (
             self.n_input_features + n_total_covariates
-            if inject_covariates_encoder
+            if use_covs
             else self.n_input_features
         )
         decoder_input_dim = (
-            latent_dim + n_total_covariates if inject_covariates_decoder else latent_dim
+            latent_dim + n_total_covariates if use_covs else latent_dim
         )
 
         self.gene_encoder = MLP(
@@ -121,8 +123,6 @@ class LatentAdditive(PerturbationModel):
         self.dropout = dropout
         self.softplus_output = softplus_output
         self.sparse_additive_mechanism = sparse_additive_mechanism
-        self.inject_covariates_encoder = inject_covariates_encoder
-        self.inject_covariates_decoder = inject_covariates_decoder
 
     def forward(
         self,
@@ -130,11 +130,10 @@ class LatentAdditive(PerturbationModel):
     ):
         control_input=batch.control_cell_emb if self.use_cell_emb else batch.control_cell_counts
         covariates = {cov_key: batch[cov_key] for cov_key in self.cov_keys}
-        if self.inject_covariates_encoder or self.inject_covariates_decoder:
+        if self.use_covs:
             merged_covariates = torch.cat(
                 [cov for cov in covariates.values()], dim=1
             )
-        if self.inject_covariates_encoder:
             control_input = torch.cat([control_input, merged_covariates], dim=1)
 
         latent_control = self.gene_encoder(control_input)
@@ -143,7 +142,7 @@ class LatentAdditive(PerturbationModel):
 
         latent_perturbed = latent_control + latent_perturbation
 
-        if self.inject_covariates_decoder:
+        if self.use_covs:
             latent_perturbed = torch.cat([latent_perturbed, merged_covariates], dim=1)
         predicted_perturbed_expression = self.decoder(latent_perturbed)
 

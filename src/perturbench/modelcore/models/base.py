@@ -185,6 +185,18 @@ class PerturbationModel(L.LightningModule, ABC):
         pcc_per_cell = num / den
         return pcc_per_cell.mean()
 
+    def _ensure_2d(self, t: torch.Tensor | None) -> torch.Tensor | None:
+        """Convert [B,S,G] -> [B*S,G], keep [N,G] as-is."""
+        if t is None:
+            return None
+        if not isinstance(t, torch.Tensor):
+            t = torch.as_tensor(t)
+        if t.dim() == 2:
+            return t
+        if t.dim() == 3:
+            return t.reshape(-1, t.size(-1))
+        raise ValueError(f"Expected 2D or 3D tensor, got dim={t.dim()}, shape={tuple(t.shape)}")
+
     def _get_mask(self, batch) -> torch.Tensor:
         if not self.use_mask:
             return None
@@ -273,6 +285,9 @@ class PerturbationModel(L.LightningModule, ABC):
 
     def on_test_start(self) -> None:
         super().on_test_start()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
         self.preds_list=[]
         self.unique_aggregations=set()
         for eval_dict in self.evaluation_config.evaluation_pipelines:
@@ -311,23 +326,31 @@ class PerturbationModel(L.LightningModule, ABC):
             if mask is not None:
                 mask = mask.to(device, non_blocking=True)
             
-            # All computations on GPU: Compute masked MSE loss for test
-            mse = (predicted_expression - y).pow(2)  # Use pow(2) for efficiency
-            if mask is not None:
-                valid = mask.sum(dim=1)
-                test_loss_per_batch = (mse * mask).sum(dim=1)
-                test_loss = (test_loss_per_batch / valid).nanmean()
+            # ---- normalize shapes to [N, G] ----
+            pred_2d = self._ensure_2d(predicted_expression)
+            y_2d = self._ensure_2d(y)
+            mask_2d = self._ensure_2d(mask) if mask is not None else None
+
+            # Safety check: must match exactly on gene dim
+            if pred_2d.shape != y_2d.shape:
+                raise ValueError(f"Shape mismatch in test_step: pred={pred_2d.shape}, y={y_2d.shape}")
+
+            # ---- masked MSE on [N,G] ----
+            mse = (pred_2d - y_2d).pow(2)
+            if mask_2d is not None:
+                valid = mask_2d.sum(dim=1).clamp_min(1.0)
+                test_loss_per_row = (mse * mask_2d).sum(dim=1)
+                test_loss = (test_loss_per_row / valid).nanmean()
             else:
                 test_loss = mse.mean()
             
-            # Log test loss (only epoch-level to avoid excessive logging)
-            # Loss is already on GPU, Lightning will handle device transfer if needed
-            self.log("test_loss", test_loss, prog_bar=True, logger=True, batch_size=y.shape[0], on_step=False, on_epoch=True)
+            self.log("test_loss", test_loss, prog_bar=True, logger=True,
+                     batch_size=y_2d.shape[0], on_step=False, on_epoch=True)
             
-            # Compute test PCC on GPU (use mask if enabled)
-            # All computation stays on GPU
-            test_pcc = self._compute_masked_pcc(predicted_expression, y, mask)
-            self.log("test_PCC", test_pcc, prog_bar=True, logger=True, batch_size=y.shape[0], on_step=False, on_epoch=True)
+            # ---- PCC on [N,G] ----
+            test_pcc = self._compute_masked_pcc(pred_2d, y_2d, mask_2d)
+            self.log("test_PCC", test_pcc, prog_bar=True, logger=True,
+                     batch_size=y_2d.shape[0], on_step=False, on_epoch=True)
         
         # Only convert to numpy for storage at the end (move to CPU only when needed)
         # This minimizes CPU-GPU transfers
@@ -368,7 +391,12 @@ class PerturbationModel(L.LightningModule, ABC):
         gathered_data = [None for _ in range(world_size)]
 
         if is_distributed:
-            # All ranks must call this
+            # Move data to CPU before gathering to avoid GPU memory allocation
+            # This prevents CUDA out of memory during all_gather_object
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()  # Clear any cached GPU memory
+
+            # All ranks must call this - data will be transferred to CPU internally by all_gather_object
             dist.all_gather_object(gathered_data, (local_expr, local_obs))
         else:
             gathered_data[0] = (local_expr, local_obs)
@@ -431,8 +459,22 @@ class PerturbationModel(L.LightningModule, ABC):
 
             # ---- Determine evaluation features (gene subset) ----
             eval_features = None
-            single_celline_mask=reference_adata.X.sum(axis=0)!=0
-            eval_features=self.gene_names[single_celline_mask]
+            single_celline_mask = reference_adata.X.sum(axis=0) != 0
+            # Convert boolean mask to numpy array if needed
+            if hasattr(single_celline_mask, 'values'):
+                single_celline_mask = single_celline_mask.values
+            elif hasattr(single_celline_mask, 'A1'):  # sparse matrix
+                single_celline_mask = single_celline_mask.A1
+            elif hasattr(single_celline_mask, 'toarray'):  # sparse matrix
+                single_celline_mask = single_celline_mask.toarray().flatten()
+            elif hasattr(single_celline_mask, 'A'):  # numpy matrix
+                single_celline_mask = single_celline_mask.A.flatten()
+            # Ensure it's a numpy array
+            single_celline_mask = np.asarray(single_celline_mask, dtype=bool)
+
+            # Convert gene_names to numpy array for boolean indexing
+            gene_names_array = np.array(self.gene_names)
+            eval_features = gene_names_array[single_celline_mask]
 
             # ---- Perform evaluation ----
             ev = Evaluation(

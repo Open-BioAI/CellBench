@@ -15,7 +15,7 @@ class LinearAdditive(PerturbationModel):
 
     def __init__(
         self,
-        inject_covariates: bool = False,
+        use_covs: bool = False,  # Unified covariate usage parameter
         use_mask: bool = False,  # Unified mask switch for training loss and evaluation
         lr: float | None = None,
         wd: float | None = None,
@@ -45,8 +45,7 @@ class LinearAdditive(PerturbationModel):
             lr_scheduler_mode (str): Learning rate scheduler mode ("plateau", "onecycle", "step")
             lr_scheduler_max_lr (float): Maximum learning rate for OneCycleLR
             lr_scheduler_total_steps (int): Total training steps for OneCycleLR
-            inject_covariates: Whether to condition the linear layer on
-                covariates
+            use_covs: Whether to condition the linear layer on covariates
             softplus_output: Whether to apply a softplus activation to the
                 output of the decoder to enforce non-negativity
             datamodule: The datamodule used to train the model
@@ -64,9 +63,14 @@ class LinearAdditive(PerturbationModel):
             lr_scheduler_total_steps=lr_scheduler_total_steps,
             use_mask=use_mask,  # Pass use_mask to base class
         )
+        # Auto-configure covariate usage based on data transform's use_covs setting or parameter
+        if hasattr(datamodule.train_dataset.transform, 'use_covs') and datamodule.train_dataset.transform.use_covs:
+            # If data transform enables covariates, automatically enable covariate injection
+            use_covs = True
+
+        self.use_covs = use_covs
         self.save_hyperparameters(ignore=["datamodule"])
         self.softplus_output = softplus_output
-        self.inject_covariates = inject_covariates
 
         n_total_covariates = datamodule.train_dataset.transform.n_total_covs
         self.n_perts = datamodule.train_dataset.transform.n_perts
@@ -79,7 +83,7 @@ class LinearAdditive(PerturbationModel):
             final_embed_dim=pert_dim,
         )
 
-        if inject_covariates:
+        if use_covs:
             self.fc_pert = nn.Linear(pert_dim + n_total_covariates, self.n_genes)
         else:
             self.fc_pert = nn.Linear(pert_dim, self.n_genes)
@@ -102,7 +106,7 @@ class LinearAdditive(PerturbationModel):
         perturbation: torch.Tensor,
         covariates: dict,
     ):
-        if self.inject_covariates:
+        if self.use_covs:
             merged_covariates = torch.cat(
                 [cov for cov in covariates.values()], dim=1
             )

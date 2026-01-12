@@ -30,6 +30,7 @@ class GEARS(PerturbationModel):
                  gene_set_path,  # Required: must provide external pkl file
                  seed=42,
                  use_mask: bool = False,  # Unified mask switch for training loss and evaluation
+                 use_covs: bool = False,  # Unified covariate usage parameter
                  lr=1e-3,
                  wd=5e-4,
                  lr_scheduler_freq: float | None = None,
@@ -55,6 +56,12 @@ class GEARS(PerturbationModel):
                                    use_mask=use_mask,  # Pass use_mask to base class
                                    )
 
+        # Auto-configure covariate usage based on data transform's use_covs setting or parameter
+        if hasattr(datamodule.train_dataset.transform, 'use_covs') and datamodule.train_dataset.transform.use_covs:
+            # If data transform enables covariates, automatically enable covariate injection
+            use_covs = True
+
+        self.use_covs = use_covs
         self.pert_key=pert_key
         self.comb_delim=comb_delim
         self.control_val=control_val
@@ -247,6 +254,13 @@ class GEARS(PerturbationModel):
 
         self.model = GEARS_Model(self.config)
 
+        # Add covariate projection layer if covariates are enabled
+        if self.use_covs and hasattr(self, 'cov_dims') and self.cov_dims:
+            cov_dim = sum(self.cov_dims.values())
+            hidden_size = self.config['hidden_size']
+            # Project covariates to embedding dimension
+            self.model.cov_proj = torch.nn.Linear(hidden_size + cov_dim, hidden_size)
+
 
     def perts2idxslist(self,perts):
         pert_idxs_list=[]
@@ -268,10 +282,23 @@ class GEARS(PerturbationModel):
         x=batch['control_cell_counts']
         perts=batch[self.pert_key]
         pert_idx=self.perts2idxslist(perts)
-        return {
+
+        input_dict = {
             'x': x,
             'pert_idx': pert_idx,
         }
+
+        # Add covariates if enabled
+        if self.use_covs and hasattr(self, 'cov_keys') and self.cov_keys:
+            covariates = {cov_key: batch[cov_key] for cov_key in self.cov_keys if cov_key in batch}
+            if covariates:
+                # Concatenate all covariate embeddings
+                cov_tensors = [cov for cov in covariates.values() if cov is not None and len(cov) > 0]
+                if cov_tensors:
+                    merged_covariates = torch.cat(cov_tensors, dim=-1)
+                    input_dict['covariates'] = merged_covariates
+
+        return input_dict
 
     def training_step(self, batch, batch_idx):
         input_dict = self.get_input_dict(batch)

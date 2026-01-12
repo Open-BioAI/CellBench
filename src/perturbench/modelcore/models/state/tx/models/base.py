@@ -365,5 +365,5 @@ class PerturbationModel(ABC, LightningModule):
         Configure a single optimizer for both the main model and the gene decoder.
         """
         # Use a single optimizer for all parameters
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr, weight_decay=self.wd)
         return optimizer

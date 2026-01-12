@@ -11,8 +11,8 @@ hidden_dim_x: 2332
 hidden_dim_cond: 329
 latent_dim: 55
 dropout: 0.2
-inject_covariates_encoder: False
-inject_covariates_decoder: False
+# use_covs is now auto-configured based on data.transform.use_covs
+# use_covs: False
 mask_prior_probability: 0.01
 softplus_output: True
 disable_sparsity: false
@@ -20,10 +20,10 @@ disable_e_dist: false
 generative_counterfactual: true #否则任务为重建扰动后分布
 
 ## Optimizer params
-lr: 8.184599223121104e-05
+lr: 1e-4  # Reduced learning rate for better numerical stability
 wd: 2.4153279969771546e-05
 
 # Learning rate scheduler configuration
 lr_scheduler_mode: onecycle  # OneCycleLR for better convergence
-lr_scheduler_max_lr: 0.001   # Max learning rate for OneCycleLR
+# lr_scheduler_max_lr: 0.001   # Max learning rate for OneCycleLR
 # lr_scheduler_total_steps: auto-calculated from dataloader size * max_epochs

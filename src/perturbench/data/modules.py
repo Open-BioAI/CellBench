@@ -416,6 +416,13 @@ class PertDataModule(L.LightningDataModule):
 
         self.infer_collect_fn=inference_collate()
         self.train_collect_fn=train_collate()
+
+        # Calculate cov_dim from the instantiated transform
+        self.cov_dim = None
+        if hasattr(self.train_dataset, 'transform') and hasattr(self.train_dataset.transform, 'cov_dims'):
+            cov_dims = self.train_dataset.transform.cov_dims
+            if cov_dims:
+                self.cov_dim = sum(cov_dims.values())
         
     def train_dataloader(self) -> DataLoader:
 

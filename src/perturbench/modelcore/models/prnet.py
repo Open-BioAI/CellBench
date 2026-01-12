@@ -144,8 +144,7 @@ class PRNet(PerturbationModel):
             control_token: str = "ctrl",
             auto_focus_gamma: float = 2.0,
             use_uncertainty: bool = False,
-            inject_covariates_encoder: bool = False,
-            inject_covariates_decoder: bool = False,
+            use_covs: bool = False,  # Unified covariate usage parameter
     ):
         super(PRNet, self).__init__(
             datamodule=datamodule,
@@ -169,11 +168,15 @@ class PRNet(PerturbationModel):
         self.use_uncertainty = use_uncertainty
         self.auto_focus_gamma = auto_focus_gamma
 
+        # Auto-configure covariate usage based on data transform's use_covs setting or parameter
+        if hasattr(datamodule.train_dataset.transform, 'use_covs') and datamodule.train_dataset.transform.use_covs:
+            # If data transform enables covariates, automatically enable covariate injection
+            use_covs = True
+
         # Use standard Gaussian NLL Loss like original PRNet
         if self.use_uncertainty:
             self.gaussian_nll_loss = nn.GaussianNLLLoss()
-        self.inject_covariates_encoder = inject_covariates_encoder
-        self.inject_covariates_decoder = inject_covariates_decoder
+        self.use_covs = use_covs
         self.use_cell_emb = use_cell_emb
 
         # Calculate total covariate dimensions if using covariates
@@ -203,7 +206,7 @@ class PRNet(PerturbationModel):
 
         # Encoder: [x_ctrl, c_emb, covariates?] -> z
         encoder_input_dim = self.n_genes + comb_dimension
-        if self.inject_covariates_encoder:
+        if self.use_covs:
             encoder_input_dim += self.n_total_covariates
         self.encoder = _PEncoder(
             input_dim=encoder_input_dim,
@@ -215,7 +218,7 @@ class PRNet(PerturbationModel):
 
         # Decoder: [z, c_emb, n_emb, covariates?] -> [pred, logvar]
         decoder_input_dim = z_dimension + comb_dimension + 10
-        if self.inject_covariates_decoder:
+        if self.use_covs:
             decoder_input_dim += self.n_total_covariates
         self.decoder = _PDecoder(
             input_dim=decoder_input_dim,
@@ -231,7 +234,7 @@ class PRNet(PerturbationModel):
         x_ctrl = batch.control_cell_counts
 
         covariates = {}
-        if self.inject_covariates_encoder or self.inject_covariates_decoder:
+        if self.use_covs:
             covariates = {cov_key: getattr(batch, cov_key, torch.tensor([])) for cov_key in self.cov_keys}
 
         device = x_ctrl.device
@@ -241,11 +244,10 @@ class PRNet(PerturbationModel):
 
         # Merge covariates if using them
         merged_covariates = None
-        if (self.inject_covariates_encoder or self.inject_covariates_decoder):
+        if self.use_covs:
             if covariates is None:
                 raise RuntimeError(
-                    "inject_covariates_encoder or inject_covariates_decoder is True "
-                    "but batch.covariates is None"
+                    "use_covs is True but batch.covariates is None"
                 )
             # Use fixed covariate_keys order to ensure consistent concatenation
             vecs = []
@@ -262,7 +264,7 @@ class PRNet(PerturbationModel):
 
         # Encoder input: [x_ctrl, c_emb, covariates?]
         enc_in = torch.cat([x_ctrl, c_emb], dim=1)
-        if self.inject_covariates_encoder and merged_covariates is not None:
+        if self.use_covs and merged_covariates is not None:
             enc_in = torch.cat([enc_in, merged_covariates], dim=1)
         enc_out = self.encoder(enc_in)
         z = enc_out["z"]
@@ -271,7 +273,7 @@ class PRNet(PerturbationModel):
         # Use random noise as in original PRNet (not deterministic control state)
         n_emb = torch.randn(x_ctrl.size(0), 10, device=device)
         dec_in = torch.cat([z, c_emb, n_emb], dim=1)
-        if self.inject_covariates_decoder and merged_covariates is not None:
+        if self.use_covs and merged_covariates is not None:
             dec_in = torch.cat([dec_in, merged_covariates], dim=1)
         dec_out = self.decoder(dec_in)
         return {

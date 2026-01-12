@@ -8,26 +8,18 @@ defaults:
 model_summary:
   max_depth: -1
 
-# Checkpoint callbacks for loss and PCC
-# These are defined here to ensure they are loaded by Hydra
+# Checkpoint callback for loss only
+# Modified to save only best val_loss checkpoint
 # Using RobustModelCheckpoint to handle disk quota errors gracefully
 model_checkpoint_loss:
   _target_: perturbench.modelcore.callbacks.robust_checkpoint.RobustModelCheckpoint
   monitor: val_loss_epoch
   mode: min
-  dirpath: ${paths.output_dir}/checkpoints/loss
-  filename: "epoch={epoch}-step={step}-valloss={val_loss_epoch:.4f}"
-  save_top_k: 1
-  save_last: false  # Disable to save disk space
-
-model_checkpoint_pcc:
-  _target_: perturbench.modelcore.callbacks.robust_checkpoint.RobustModelCheckpoint
-  monitor: val_PCC_epoch
-  mode: max
-  dirpath: ${paths.output_dir}/checkpoints/pcc
-  filename: "epoch={epoch}-step={step}-valpcc={val_PCC_epoch:.4f}"
-  save_top_k: 1
-  save_last: false  # Disable to save disk space, only save best checkpoint
+  dirpath: ${paths.output_dir}/checkpoints
+  filename: "best-{epoch:02d}-{step:06d}-{val_loss_epoch:.4f}"
+  save_top_k: 1  # 严格只保存1个最好的checkpoint
+  save_last: false
+  auto_insert_metric_name: false  # 禁用自动版本控制
 
 # Optional: Save last checkpoint for easy resume
 # Disabled by default to save disk space (only keep best loss and PCC checkpoints)

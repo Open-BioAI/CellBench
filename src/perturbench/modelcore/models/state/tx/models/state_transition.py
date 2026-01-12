@@ -122,6 +122,7 @@ class StateTransitionPerturbationModel(PerturbationModel):
         transformer_backbone_key: str = "GPT2",
         transformer_backbone_kwargs: dict = None,
         dropout: float = 0.1,
+        use_covs: bool = False,  # Unified covariate usage parameter
         **kwargs,
     ):
         """
@@ -133,12 +134,32 @@ class StateTransitionPerturbationModel(PerturbationModel):
             gpt: e.g. "TranslationTransformerSamplesModel".
             model_kwargs: dictionary passed to that model's constructor.
             loss: choice of distributional metric ("sinkhorn", "energy", etc.).
+            use_covs: Whether to use covariates in the model.
             **kwargs: anything else to pass up to PerturbationModel or not used.
         """
-        # Call the parent PerturbationModel constructor
-        super().__init__(datamodule,lr =kwargs.get('lr', 1e-4))
+        # Auto-configure covariate usage based on data transform's use_covs setting or parameter
+        if hasattr(datamodule.train_dataset.transform, 'use_covs') and datamodule.train_dataset.transform.use_covs:
+            # If data transform enables covariates, automatically enable covariate injection
+            use_covs = True
+
+        # Call the parent PerturbationModel constructor with lr scheduler parameters
+        super().__init__(
+            datamodule,
+            lr=kwargs.get('lr', 1e-4),
+            wd=kwargs.get('wd'),
+            lr_scheduler_freq=kwargs.get('lr_scheduler_freq'),
+            lr_scheduler_interval=kwargs.get('lr_scheduler_interval'),
+            lr_scheduler_patience=kwargs.get('lr_scheduler_patience'),
+            lr_scheduler_factor=kwargs.get('lr_scheduler_factor'),
+            lr_scheduler_mode=kwargs.get('lr_scheduler_mode'),
+            lr_scheduler_max_lr=kwargs.get('lr_scheduler_max_lr'),
+            lr_scheduler_total_steps=kwargs.get('lr_scheduler_total_steps'),
+            lr_monitor_key=kwargs.get('lr_monitor_key'),
+            use_mask=kwargs.get('use_mask', False)
+        )
 
         # Save or store relevant hyperparams
+        self.use_covs = use_covs
         self.input_dim = self.embedding_dim if self.embedding_dim else self.n_genes
         self.output_dim = self.embedding_dim if self.embedding_dim else self.n_genes
         self.use_cell_emb = kwargs.get("use_cell_emb", bool(self.embedding_dim))
@@ -172,9 +193,31 @@ class StateTransitionPerturbationModel(PerturbationModel):
         self.detach_decoder = kwargs.get("detach_decoder", False)
         self.dropout=dropout
 
+        # Initialize covariate encoder if covariates are used
+        self.cov_dim = kwargs.get("cov_dim", None)
+
+        # Auto-detect cov_dim from datamodule if not provided
+        if self.cov_dim is None and datamodule is not None:
+            self.cov_dim = getattr(datamodule, 'cov_dim', None)
+
+        if self.use_covs:
+            if self.cov_dim is None:
+                raise ValueError("use_covs=True requires cov_dim. Either provide it in kwargs or ensure datamodule has cov_dim calculated from transform.")
+
+            self.cov_encoder = build_mlp(
+                in_dim=self.cov_dim,
+                out_dim=self.hidden_dim,
+                hidden_dim=self.hidden_dim,
+                n_layers=2,
+                dropout=self.dropout,
+                activation=self.activation_class,
+            )
+        else:
+            self.cov_encoder = None
+
         self.transformer_backbone_key = transformer_backbone_key
-        self.transformer_backbone_kwargs = transformer_backbone_kwargs
-        self.transformer_backbone_kwargs["n_positions"] = self.cell_sentence_len + kwargs.get("extra_tokens", 0)
+        self.transformer_backbone_kwargs = transformer_backbone_kwargs or {}
+        # n_positions will be calculated after all tokens are initialized
 
         self.distributional_loss = distributional_loss
 
@@ -268,6 +311,13 @@ class StateTransitionPerturbationModel(PerturbationModel):
         if kwargs.get("confidence_token", False):
             self.confidence_token = ConfidenceToken(hidden_dim=self.hidden_dim, dropout=self.dropout)
             self.confidence_loss_fn = nn.MSELoss()
+
+        # Calculate n_positions after all tokens are initialized
+        extra = kwargs.get("extra_tokens", 0)
+        extra += 1 if self.use_batch_token else 0
+        extra += 1 if self.use_covs else 0
+        extra += 1 if (self.confidence_token is not None) else 0
+        self.transformer_backbone_kwargs["n_positions"] = self.cell_sentence_len + extra
 
         # Backward-compat: accept legacy key `freeze_pert`
         self.freeze_pert_backbone = kwargs.get("freeze_pert_backbone", kwargs.get("freeze_pert", False))
@@ -455,7 +505,12 @@ class StateTransitionPerturbationModel(PerturbationModel):
 
         # Add encodings in input_dim space, then project to hidden_dim
         combined_input = pert_embedding + control_cells  # Shape: [B, S, hidden_dim]
-        seq_input = combined_input  # Shape: [B, S, hidden_dim]
+
+        # Note: Covariates are not directly concatenated to sequence input in StateTransition model
+        # This architecture expects fixed hidden_dim input to the transformer
+        # Covariates may be handled at attention or other levels in future implementations
+
+        seq_input = combined_input  # Shape: [B, S, hidden_dim + cov_dim]
 
         if self.batch_encoder is not None:
             # Extract batch indices (assume they are integers or convert from one-hot)
@@ -480,6 +535,26 @@ class StateTransitionPerturbationModel(PerturbationModel):
             # Prepend the batch token to the sequence along the sequence dimension
             # [B, S, H] -> [B, S+1, H], batch token at position 0
             seq_input = torch.cat([self.batch_token.expand(batch_size, -1, -1), seq_input], dim=1)
+
+        # Insert covariate token after batch token if covariates are enabled
+        inserted_cov_token = False
+        if self.use_covs and self.cov_encoder is not None:
+            cov = batch.get("covariates", None)  # [B, cov_dim] or [cov_dim]
+            if cov is not None:
+                # Handle single sample case (inference)
+                if cov.dim() == 1:
+                    cov = cov.unsqueeze(0)
+                cov_emb = self.cov_encoder(cov)     # [B, H]
+                cov_token = cov_emb.unsqueeze(1)    # [B, 1, H]
+                inserted_cov_token = True
+
+                if self.use_batch_token and self.batch_token is not None:
+                    seq_input = torch.cat([seq_input[:, :1, :], cov_token, seq_input[:, 1:, :]], dim=1)
+                else:
+                    seq_input = torch.cat([cov_token, seq_input], dim=1)
+
+        # Store insertion state for output parsing
+        self._inserted_cov_token = inserted_cov_token
 
         confidence_pred = None
         if self.confidence_token is not None:
@@ -507,28 +582,28 @@ class StateTransitionPerturbationModel(PerturbationModel):
             outputs = self.transformer_backbone(inputs_embeds=seq_input)
             transformer_output = outputs.last_hidden_state
 
-        # Extract outputs accounting for optional prepended batch token and optional confidence token at the end
-        if self.confidence_token is not None and self.use_batch_token and self.batch_token is not None:
-            # transformer_output: [B, 1 + S + 1, H] -> batch token at 0, cells 1..S, confidence at -1
-            batch_token_pred = transformer_output[:, :1, :]  # [B, 1, H]
-            res_pred, confidence_pred = self.confidence_token.extract_confidence_prediction(
-                transformer_output[:, 1:, :]
-            )
-            # res_pred currently excludes the confidence token and starts from former index 1
-            self._batch_token_cache = batch_token_pred
-        elif self.confidence_token is not None:
-            # Only confidence token appended at the end
-            res_pred, confidence_pred = self.confidence_token.extract_confidence_prediction(transformer_output)
-            self._batch_token_cache = None
-        elif self.use_batch_token and self.batch_token is not None:
-            # Only batch token prepended at the beginning
-            batch_token_pred = transformer_output[:, :1, :]  # [B, 1, H]
-            res_pred = transformer_output[:, 1:, :]  # [B, S, H]
-            self._batch_token_cache = batch_token_pred
+        # Extract outputs accounting for optional prepended tokens and optional confidence token at the end
+        out = transformer_output
+        confidence_pred = None
+
+        # 1) 先剥离 confidence token（如果有）
+        if self.confidence_token is not None:
+            out, confidence_pred = self.confidence_token.extract_confidence_prediction(out)
+
+        # 2) 用指针 start 依次跳过 batch_token / cov_token
+        start = 0
+        if self.use_batch_token and self.batch_token is not None:
+            self._batch_token_cache = out[:, :1, :]
+            start += 1
         else:
-            # Neither special token used
-            res_pred = transformer_output
             self._batch_token_cache = None
+
+        # cov token 只有真的插入了才跳过
+        if getattr(self, "_inserted_cov_token", False):
+            start += 1
+
+        # 3) 剩下都是 cell tokens
+        res_pred = out[:, start:, :]   # [B, S, H] (保证正确)
 
         # add to basal if predicting residual
         if self.predict_residual and self.gene_decoder is None:
@@ -687,9 +762,6 @@ class StateTransitionPerturbationModel(PerturbationModel):
             confidence_weight = 0.1  # You can make this configurable
             total_loss = total_loss + confidence_weight * confidence_loss
 
-            # Add to total loss
-            total_loss = total_loss + confidence_loss
-
         if self.regularization > 0.0:
             ctrl_cell_emb = batch["ctrl_cell_emb"].reshape_as(pred)
             delta = pred - ctrl_cell_emb
@@ -826,24 +898,53 @@ class StateTransitionPerturbationModel(PerturbationModel):
         return {"loss": loss, "predictions": pred}
 
     def test_step(self, data_tuple:tuple[any,pd.DataFrame], batch_idx: int) -> None:
-        """Test step: 将 per-cell 预测在 cell 维度上聚合为 per-observation 预测。"""
+        """Test step: 计算 PCC 并将 per-cell 预测聚合为 per-observation 预测。"""
         batch, obs_df = data_tuple
 
-        # 使用关键字参数避免与 Lightning 的 hook 签名冲突
+        # 获取预测结果用于 PCC 计算（与其他模型一致）
+        predicted_expression = self.predict(batch)
+
+        # 获取 ground truth 并计算 PCC（与其他模型一致）
+        if isinstance(batch, dict):
+            y = batch.get('pert_cell_counts', None)
+        else:
+            y = getattr(batch, 'pert_cell_counts', None)
+
+        if y is not None and predicted_expression is not None:
+            # 确保预测结果在正确的设备上
+            device = y.device
+            if not isinstance(predicted_expression, torch.Tensor):
+                predicted_expression = torch.as_tensor(predicted_expression, device=device, dtype=y.dtype)
+            else:
+                predicted_expression = predicted_expression.to(device, non_blocking=True)
+
+            # 获取掩码
+            mask = self._get_mask(batch)
+            if mask is not None:
+                mask = mask.to(device, non_blocking=True)
+
+            # ---- 确保所有张量都是2D格式 [N, G] ----
+            pred_2d = self._ensure_2d(predicted_expression)
+            y_2d = self._ensure_2d(y)
+            mask_2d = self._ensure_2d(mask) if mask is not None else None
+
+            # 计算 test PCC（使用2D格式）
+            test_pcc = self._compute_masked_pcc(pred_2d, y_2d, mask_2d)
+            self.log("test_PCC", test_pcc, prog_bar=True, logger=True, batch_size=y_2d.shape[0], on_step=False, on_epoch=True)
+
+        # 进行 state_sm 特有的聚合
         out_dict = self.predict_step(batch, padded=False, batch_idx=batch_idx)
 
         pred_expr = out_dict.get("pert_cell_counts_preds", None)
         if pred_expr is None:
             pred_expr = out_dict.get("preds", None)
 
-        # 转成 numpy
         pred_expr_np = pred_expr.detach().cpu().numpy()
         n_pred, n_gene = pred_expr_np.shape
         n_obs = len(obs_df)
 
         # 当前 state 配置下：一个 obs（条件）对应若干个 cell 的预测（例如 32 个），
         # 因此这里将 [n_pred, G] 重塑并在 cell 维上做平均，得到 [n_obs, G]，
-        # 与其它模型的“每个 obs 一行预测”语义对齐。
         if n_obs == 0:
             raise ValueError("obs_df has zero rows in test_step.")
         if n_pred % n_obs != 0:
@@ -905,8 +1006,53 @@ class StateTransitionPerturbationModel(PerturbationModel):
 
     def configure_optimizers(self):
         """
-        Configure a single optimizer for both the main model and the gene decoder.
+        Configure optimizer and scheduler for StateTransition model.
+        Supports multiple scheduler modes: onecycle, plateau, or step (default).
         """
-        # Use a single optimizer for all parameters
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
-        return optimizer
+        optimizer = torch.optim.Adam(
+            self.parameters(), lr=self.lr, weight_decay=self.wd
+        )
+
+        if self.lr_scheduler_mode == "onecycle":
+            # OneCycleLR scheduler
+            total_steps = getattr(self, 'lr_scheduler_total_steps', None)
+            if total_steps is None:
+                try:
+                    steps_per_epoch = len(self.trainer.datamodule.train_dataloader())
+                    total_steps = steps_per_epoch * self.trainer.max_epochs
+                except Exception:
+                    total_steps = 100 * 100  # fallback
+            scheduler = torch.optim.lr_scheduler.OneCycleLR(
+                optimizer,
+                max_lr=getattr(self, 'lr_scheduler_max_lr', None) or self.lr,
+                total_steps=total_steps,
+            )
+            lr_scheduler = {"scheduler": scheduler, "interval": "step"}
+
+        elif self.lr_scheduler_mode == "plateau":
+            # ReduceLROnPlateau scheduler
+            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer,
+                factor=getattr(self, 'lr_scheduler_factor', 0.5),
+                patience=getattr(self, 'lr_scheduler_patience', 10),
+            )
+            lr_scheduler = {
+                "scheduler": scheduler,
+                "monitor": getattr(self, 'lr_monitor_key', 'val_loss'),
+                "frequency": getattr(self, 'lr_scheduler_freq', 1),
+                "interval": getattr(self, 'lr_scheduler_interval', 'epoch'),
+            }
+
+        else:
+            # Default: StepLR
+            scheduler = torch.optim.lr_scheduler.StepLR(
+                optimizer,
+                step_size=getattr(self, 'lr_scheduler_step_size', 10),
+                gamma=getattr(self, 'lr_scheduler_gamma', 0.1),
+            )
+            lr_scheduler = {
+                "scheduler": scheduler,
+                "interval": "epoch",
+            }
+
+        return {"optimizer": optimizer, "lr_scheduler": lr_scheduler}

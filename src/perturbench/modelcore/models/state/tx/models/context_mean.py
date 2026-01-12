@@ -143,7 +143,7 @@ class ContextMeanPerturbationModel(PerturbationModel):
         Returns an optimizer for our dummy parameter if available.
         """
         if len(list(self.parameters())) > 0:
-            return torch.optim.Adam(self.parameters(), lr=self.lr)
+            return torch.optim.Adam(self.parameters(), lr=self.lr, weight_decay=self.wd)
         return None
 
     def forward(self, batch: dict) -> torch.Tensor:
