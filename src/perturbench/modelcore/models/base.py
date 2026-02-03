@@ -1,34 +1,3 @@
-"""
-BSD 3-Clause License
-
-Copyright (c) 2024, <anonymized authors of NeurIPS submission #1306>
-
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions are met:
-
-1. Redistributions of source code must retain the above copyright notice, this
-   list of conditions and the following disclaimer.
-
-2. Redistributions in binary form must reproduce the above copyright notice,
-   this list of conditions and the following disclaimer in the documentation
-   and/or other materials provided with the distribution.
-
-3. Neither the name of the copyright holder nor the names of its
-   contributors may be used to endorse or promote products derived from
-   this software without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
-FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
-OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-"""
-
 import lightning as L
 import torch
 from abc import ABC
@@ -117,6 +86,8 @@ class PerturbationModel(L.LightningModule, ABC):
                 self.gene_pert_dim=datamodule.train_dataset.transform.gene_pert_dim
                 self.drug_pert_dim=datamodule.train_dataset.transform.drug_pert_dim
                 self.env_pert_dim=datamodule.train_dataset.transform.env_pert_dim
+                self.crispr_pert_dim=datamodule.train_dataset.transform.crispr_pert_dim
+                
                 if datamodule.train_dataset.transform.use_covs:
                     self.cov_keys=datamodule.train_dataset.transform.cov_keys
                     self.cov_dims=datamodule.train_dataset.transform.cov_dims
@@ -139,51 +110,9 @@ class PerturbationModel(L.LightningModule, ABC):
 
             if self.use_infer_top_hvgs and hasattr(datamodule, "inference_top_hvg"):
                 self.infer_gene_ids=datamodule.inference_top_hvg
-
-    def _compute_masked_pcc(
-        self,
-        predictions: torch.Tensor,
-        observed: torch.Tensor,
-        mask: torch.Tensor = None
-    ) -> torch.Tensor:
-        """
-        Compute Pearson Correlation Coefficient, optionally with mask.
-
-        Args:
-            predictions: Predicted expression values [batch_size, n_genes]
-            observed: Observed expression values [batch_size, n_genes]
-            mask: Optional expression mask [batch_size, n_genes], 1 for valid genes
-
-        Returns:
-            Mean PCC across batch
-        """
-        x = predictions
-        y = observed
-
-        if mask is not None:
-            # Ensure mask is on the same device as predictions
-            mask = mask.to(x.device)
-            # Masked PCC: only compute on expressed genes
-            valid_counts = mask.sum(dim=1, keepdim=True).clamp_min(1.0)  # Avoid division by zero
-            x_mean = (x * mask).sum(dim=1, keepdim=True) / valid_counts
-            y_mean = (y * mask).sum(dim=1, keepdim=True) / valid_counts
-            x_centered = (x - x_mean) * mask
-            y_centered = (y - y_mean) * mask
-        else:
-            # Full gene PCC
-            x_mean = x.mean(dim=1, keepdim=True)
-            y_mean = y.mean(dim=1, keepdim=True)
-            x_centered = x - x_mean
-            y_centered = y - y_mean
-
-        num = (x_centered * y_centered).sum(dim=1)
-        den = (
-            x_centered.pow(2).sum(dim=1).sqrt()
-            * y_centered.pow(2).sum(dim=1).sqrt()
-            + 1e-8
-        )
-        pcc_per_cell = num / den
-        return pcc_per_cell.mean()
+            
+            self.mask_type=self.datamodule.mask_type
+            self.cellclass_mask_dict=self.datamodule.cellclass_mask_dict
 
     def _ensure_2d(self, t: torch.Tensor | None) -> torch.Tensor | None:
         """Convert [B,S,G] -> [B*S,G], keep [N,G] as-is."""
@@ -200,24 +129,18 @@ class PerturbationModel(L.LightningModule, ABC):
     def _get_mask(self, batch) -> torch.Tensor:
         if not self.use_mask:
             return None
-
-        # Get pert_cell_counts from batch (handle both dict and Batch object)
-        if isinstance(batch, dict):
-            pert_cell_counts = batch.get("pert_cell_counts", None)
+        return batch.mask
+    
+    def  auto_mse(self, pred, target,mask=None):
+        import torch.nn.functional as F
+        if mask is not None:
+            masked_loss = F.mse_loss(pred*mask, target*mask, reduction="none")
+            valid = mask.sum(dim=1)
+            loss_per_batch = (masked_loss * mask).sum(dim=1)
+            loss = (loss_per_batch / valid).nanmean()
         else:
-            pert_cell_counts = getattr(batch, "pert_cell_counts", None)
-
-        if pert_cell_counts is None:
-            return None
-
-        # Handle sparse tensors - convert to dense for element-wise operations
-        if pert_cell_counts.is_sparse:
-            pert_cell_counts = pert_cell_counts.to_dense()
-
-        # Simple and effective: mask = (pert_cell_counts != 0)
-        mask = (pert_cell_counts != 0).float()
-
-        return mask
+            loss = F.mse_loss(pred, target, reduction="mean")
+        return loss
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(
@@ -302,56 +225,6 @@ class PerturbationModel(L.LightningModule, ABC):
 
         batch,obs_df=data_tuple
         predicted_expression = self.predict(batch)
-        
-        # Compute test loss with mask (similar to validation_step)
-        # Get ground truth labels
-        if isinstance(batch, dict):
-            y = batch.get('pert_cell_counts', None)
-        else:
-            y = getattr(batch, 'pert_cell_counts', None)
-        
-        if y is not None and predicted_expression is not None:
-            # Get device from y (usually GPU)
-            device = y.device
-            
-            # Ensure predictions are torch.Tensor and on same device as y (GPU)
-            # All computations will be done on GPU for efficiency
-            if not isinstance(predicted_expression, torch.Tensor):
-                predicted_expression = torch.as_tensor(predicted_expression, device=device, dtype=y.dtype)
-            else:
-                predicted_expression = predicted_expression.to(device, non_blocking=True)
-            
-            # Get expression mask using unified method from base class
-            mask = self._get_mask(batch)
-            if mask is not None:
-                mask = mask.to(device, non_blocking=True)
-            
-            # ---- normalize shapes to [N, G] ----
-            pred_2d = self._ensure_2d(predicted_expression)
-            y_2d = self._ensure_2d(y)
-            mask_2d = self._ensure_2d(mask) if mask is not None else None
-
-            # Safety check: must match exactly on gene dim
-            if pred_2d.shape != y_2d.shape:
-                raise ValueError(f"Shape mismatch in test_step: pred={pred_2d.shape}, y={y_2d.shape}")
-
-            # ---- masked MSE on [N,G] ----
-            mse = (pred_2d - y_2d).pow(2)
-            if mask_2d is not None:
-                valid = mask_2d.sum(dim=1).clamp_min(1.0)
-                test_loss_per_row = (mse * mask_2d).sum(dim=1)
-                test_loss = (test_loss_per_row / valid).nanmean()
-            else:
-                test_loss = mse.mean()
-            
-            self.log("test_loss", test_loss, prog_bar=True, logger=True,
-                     batch_size=y_2d.shape[0], on_step=False, on_epoch=True)
-            
-            # ---- PCC on [N,G] ----
-            test_pcc = self._compute_masked_pcc(pred_2d, y_2d, mask_2d)
-            self.log("test_PCC", test_pcc, prog_bar=True, logger=True,
-                     batch_size=y_2d.shape[0], on_step=False, on_epoch=True)
-        
         # Only convert to numpy for storage at the end (move to CPU only when needed)
         # This minimizes CPU-GPU transfers
         if isinstance(predicted_expression, torch.Tensor):
@@ -364,279 +237,786 @@ class PerturbationModel(L.LightningModule, ABC):
     def predict(self, batch):
         pass
 
-    def on_test_end(self) -> None:
+    def _gather_predictions(self):
+        """Gather predictions from all distributed ranks."""
         import torch.distributed as dist
-        import sys
 
-        super().on_test_end()
-        model_name = str(self.__class__).split(".")[-1].replace("'>", "")
+        local_expr = np.concatenate([expr for expr, _ in self.preds_list])
+        local_obs = pd.concat([obs for _, obs in self.preds_list])
 
-        # --- Gather predictions from all ranks ---
-        local_preds_expr = []
-        local_preds_obs = []
-        for expr, obs in self.preds_list:
-            local_preds_expr.append(expr)
-            local_preds_obs.append(obs)
-
-        # Concatenate locally first
-        local_expr = np.concatenate(local_preds_expr)
-        local_obs = pd.concat(local_preds_obs)
-
-        # Determine distributed environment
         is_distributed = dist.is_available() and dist.is_initialized()
         world_size = dist.get_world_size() if is_distributed else 1
         rank = dist.get_rank() if is_distributed else 0
 
-        # Each rank prepares its own data to gather
         gathered_data = [None for _ in range(world_size)]
 
         if is_distributed:
-            # Move data to CPU before gathering to avoid GPU memory allocation
-            # This prevents CUDA out of memory during all_gather_object
             if torch.cuda.is_available():
-                torch.cuda.empty_cache()  # Clear any cached GPU memory
-
-            # All ranks must call this - data will be transferred to CPU internally by all_gather_object
+                torch.cuda.empty_cache()
             dist.all_gather_object(gathered_data, (local_expr, local_obs))
         else:
             gathered_data[0] = (local_expr, local_obs)
 
-        summary_metrics=None
-        # ---- Only rank 0 performs aggregation ----
-        if rank == 0:
-            print(f"[Rank 0] Gathering data from {world_size} ranks ...")
-            sys.stdout.flush()
+        return gathered_data, is_distributed, rank
 
-            gathered_expr, gathered_obs = [], []
-            for expr, obs in gathered_data:
-                gathered_expr.append(expr)
-                gathered_obs.append(obs)
+    def _build_anndata(self, gathered_data):
+        """Build predicted and reference AnnData objects from gathered data."""
+        gathered_expr = np.concatenate([expr for expr, _ in gathered_data])
+        gathered_obs = pd.concat([obs for _, obs in gathered_data], ignore_index=True)
 
-            gathered_expr = np.concatenate(gathered_expr)
-            gathered_obs = pd.concat(gathered_obs, ignore_index=True)
+        gene_names = self.gene_names
+        if hasattr(self, 'infer_gene_ids'):
+            gene_names = gene_names[self.infer_gene_ids]
 
-            # # Ensure that X (gathered_expr) and obs (gathered_obs) have matching row counts
-            # # for AnnData construction. For some models (e.g., set-based models) we may
-            # # produce multiple predictions per observation; in that case, aggregate them.
-            # n_x, n_obs = gathered_expr.shape[0], len(gathered_obs)
-            # if n_x != n_obs:
-            #     if n_x % n_obs != 0:
-            #         raise ValueError(
-            #             f"Mismatch between prediction rows (X={n_x}) and obs rows ({n_obs}), "
-            #             "and cannot infer an integer aggregation factor."
-            #         )
-            #     factor = n_x // n_obs
-            #     gathered_expr = gathered_expr.reshape(n_obs, factor, -1).mean(axis=1)
+        control_adata = self.datamodule.test_dataset.control_adata[:, gene_names]
+        pert_adata = self.datamodule.test_dataset.pert_adata[:, gene_names]
 
-            print(f"[Rank 0] Total gathered samples: {len(gathered_obs)}")
-            sys.stdout.flush()
+        predicted_adata = ad.AnnData(
+            X=gathered_expr,
+            obs=gathered_obs,
+            var=pd.DataFrame(index=gene_names),
+        )
+        predicted_adata = ad.concat([predicted_adata, control_adata])
+        predicted_adata.obs_names_make_unique()
+        reference_adata = ad.concat([pert_adata, control_adata])
 
-            # ---- Build AnnData objects ----
-            gene_names=self.gene_names
-            if hasattr(self,'infer_gene_ids'):
-                print("[Rank 0] Use infer gene ids")
-                sys.stdout.flush()
-                gene_names=gene_names[self.infer_gene_ids]
+        return predicted_adata, reference_adata, gene_names
 
-            print(len(gene_names))
-            sys.stdout.flush()
-
-            control_adata = self.datamodule.test_dataset.control_adata[:,gene_names]
-            pert_adata = self.datamodule.test_dataset.pert_adata[:,gene_names]
-
-            predicted_adata = ad.AnnData(
-                X=gathered_expr,
-                obs=gathered_obs,
-                var=pd.DataFrame(index=gene_names),
-            )
-
-            predicted_adata = ad.concat([predicted_adata, control_adata])
-            predicted_adata.obs_names_make_unique()
-            reference_adata = ad.concat([pert_adata, control_adata])
-
-            print(f"[Rank 0] Built AnnData: predicted={predicted_adata.shape}, reference={reference_adata.shape}")
-            sys.stdout.flush()
-
-            # ---- Determine evaluation features (gene subset) ----
-            eval_features = None
-            single_celline_mask = reference_adata.X.sum(axis=0) != 0
-            # Convert boolean mask to numpy array if needed
-            if hasattr(single_celline_mask, 'values'):
-                single_celline_mask = single_celline_mask.values
-            elif hasattr(single_celline_mask, 'A1'):  # sparse matrix
-                single_celline_mask = single_celline_mask.A1
-            elif hasattr(single_celline_mask, 'toarray'):  # sparse matrix
-                single_celline_mask = single_celline_mask.toarray().flatten()
-            elif hasattr(single_celline_mask, 'A'):  # numpy matrix
-                single_celline_mask = single_celline_mask.A.flatten()
-            # Ensure it's a numpy array
-            single_celline_mask = np.asarray(single_celline_mask, dtype=bool)
-
-            # Convert gene_names to numpy array for boolean indexing
-            gene_names_array = np.array(self.gene_names)
-            eval_features = gene_names_array[single_celline_mask]
-
-            # ---- Perform evaluation ----
-            ev = Evaluation(
-                model_adatas=[predicted_adata],
-                model_names=[model_name],
-                ref_adata=reference_adata,
-                pert_col='_merged_pert_col_' if self.use_mix_pert else self.pert_key ,
-                cov_cols=self.result_avg_keys,
-                ctrl=self.control_val,
-                features=eval_features,  # Pass gene subset if mask is enabled
-            )
-
-            for aggr in self.unique_aggregations:
-                ev.aggregate(aggr_method=aggr)
-
-            summary_metrics_dict = {}
-            for eval_dict in self.evaluation_config.evaluation_pipelines:
-                aggr = eval_dict["aggregation"]
-                metric = eval_dict["metric"]
-                ev.evaluate(aggr_method=aggr, metric=metric)
-
-                df = ev.evals[aggr][metric].copy()
-                avg = df.groupby("model").mean("metric")
-                summary_metrics_dict[f"{metric}_{aggr}"] = avg["metric"]
-
-                if eval_dict.get("rank"):
-                    ev.evaluate_pairwise(aggr_method=aggr, metric=metric)
-                    ev.evaluate_rank(aggr_method=aggr, metric=metric)
-                    rank_df = ev.rank_evals[aggr][metric].copy()
-                    avg_rank = rank_df.groupby("model").mean("rank")
-                    summary_metrics_dict[f"{metric}_rank_{aggr}"] = avg_rank["rank"]
-
-            summary_metrics = pd.DataFrame(summary_metrics_dict).T.applymap(
-                lambda x: float(np.format_float_positional(
-                    x, precision=4, unique=False, fractional=False, trim="k"
-                ))
-            )
-
-            if self.evaluation_config.print_summary:
-                print(f"\n===== Summary Metrics =====\n{summary_metrics}\n")
-                sys.stdout.flush()
-
-            # Get output directory (contains timestamp from hydra)
-            # Try to get from hydra runtime, fallback to logger save_dir or evaluation_config.save_dir
-            try:
-                output_dir = HydraConfig.get().runtime.output_dir
-            except Exception:
-                # Fallback: try to get from logger
-                if self.logger is not None:
-                    # Handle both single logger and list of loggers
-                    logger_obj = self.logger[0] if isinstance(self.logger, (list, tuple)) and len(self.logger) > 0 else self.logger
-                    output_dir = getattr(logger_obj, "save_dir", None) or self.evaluation_config.save_dir
-                else:
-                    output_dir = self.evaluation_config.save_dir
+    def _compute_sample_level_pcc(self, predicted_adata, reference_adata, eval_features):
+        """
+        计算样本级别的 Pearson 相关系数 (PCC)，不进行聚合。
+        对每个样本计算预测值和真实值之间的 PCC，然后返回平均值。
+        
+        Args:
+            predicted_adata: 预测的 AnnData 对象
+            reference_adata: 参考的 AnnData 对象
+            eval_features: 用于评估的基因子集
             
-            # Create summary directory in output_dir (contains timestamp)
-            summary_dir = os.path.join(output_dir, "summary")
-            os.makedirs(summary_dir, exist_ok=True)
+        Returns:
+            float: 所有样本 PCC 的平均值
+        """
+        from scipy.stats import pearsonr
+        
+        # 获取 eval_features 对应的基因索引
+        gene_mask = np.isin(predicted_adata.var_names, eval_features)
+        
+        # 提取预测和参考的表达矩阵
+        pred_X = np.asarray(predicted_adata.X[:, gene_mask])
+        ref_X = np.asarray(reference_adata.X[:, gene_mask])
+        
+        # 确保样本数相同
+        n_samples = min(pred_X.shape[0], ref_X.shape[0])
+        
+        # 计算每个样本的 PCC
+        pcc_values = []
+        for i in range(n_samples):
+            pred_row = pred_X[i].flatten()
+            ref_row = ref_X[i].flatten()
             
-            # Also keep the original evaluation save_dir for backward compatibility
-            os.makedirs(self.evaluation_config.save_dir, exist_ok=True)
-            ev.save(self.evaluation_config.save_dir)
-
-            # Save summary files to both locations
-            csv_path = os.path.join(self.evaluation_config.save_dir, "summary.csv")
-            summary_metrics.to_csv(csv_path, index_label="metric")
-            
-            # Also save to summary directory
-            # Add checkpoint type suffix if available
-            ckpt_type = getattr(self, "current_test_ckpt_type", None)
-            if ckpt_type and ckpt_type != "unknown":
-                summary_csv_path = os.path.join(summary_dir, f"summary_metrics_{ckpt_type}.csv")
-            else:
-                summary_csv_path = os.path.join(summary_dir, "summary_metrics.csv")
-            summary_metrics.to_csv(summary_csv_path, index_label="metric")
-
-            # Always save predictions to summary directory (regardless of wandb)
-            # Add checkpoint type suffix to distinguish predictions from different checkpoints
-            if ckpt_type and ckpt_type != "unknown":
-                pred_h5ad_path = os.path.join(summary_dir, f"predictions_{ckpt_type}.h5ad")
-                # ref_h5ad_path = os.path.join(summary_dir, f"reference_{ckpt_type}.h5ad")  # Disabled: no longer saving reference files
-            else:
-                pred_h5ad_path = os.path.join(summary_dir, "predictions.h5ad")
-                # ref_h5ad_path = os.path.join(summary_dir, "reference.h5ad")  # Disabled: no longer saving reference files
-            # Track whether files were saved successfully
-            files_saved = False
-            try:
-                predicted_adata.write(pred_h5ad_path)
-                # reference_adata.write(ref_h5ad_path)  # Disabled: no longer saving reference files to save disk space
-                files_saved = True
-                print(f"[Rank 0] Prediction files saved to: {summary_dir}")
-                print(f"[Rank 0]   - predictions.h5ad: {pred_h5ad_path}")
-                # print(f"[Rank 0]   - reference.h5ad: {ref_h5ad_path}")  # Disabled: no longer saving reference files
-                sys.stdout.flush()
-            except OSError as e:
-                # Handle disk quota exceeded and other disk-related errors gracefully
-                if e.errno == 122:  # Disk quota exceeded
-                    print("[Rank 0] WARNING: Disk quota exceeded. Skipping prediction file save.")
-                    print("[Rank 0]   Metrics are still saved to CSV and logged to wandb.")
-                    print("[Rank 0]   File size would be ~{predicted_adata.X.nbytes / 1024**3:.2f} GB")
-                    print("[Rank 0]   To save predictions, free up disk space or use a different output directory.")
-                else:
-                    print("[Rank 0] WARNING: Failed to save prediction files (OSError {e.errno}): {e}")
-                    print("[Rank 0]   Metrics are still saved to CSV and logged to wandb.")
-                sys.stdout.flush()
-            except Exception as e:
-                print(f"[Rank 0] WARNING: Failed to save prediction files: {e}")
-                print("[Rank 0]   Metrics are still saved to CSV and logged to wandb.")
-                sys.stdout.flush()
-
-            print(f"[Rank 0] Evaluation finished. Results saved to {csv_path}")
-            if files_saved:
-                print(f"[Rank 0] Summary files also saved to {summary_dir}")
-                print("[Rank 0] Test predictions saved to:")
-                print(f"[Rank 0]   - Predictions: {pred_h5ad_path}")
-                # print(f"[Rank 0]   - Reference: {ref_h5ad_path}")  # Disabled: no longer saving reference files
-            else:
-                print("[Rank 0] WARNING: Prediction files were not saved due to disk space issues.")
-            print(f"[Rank 0]   - Summary metrics: {summary_csv_path}")
-            sys.stdout.flush()
-
-            # ---- Optional: Log test metrics and predictions to wandb (if enabled and available) ----
-            save_preds_to_wandb = self.evaluation_config.get("save_predictions_to_wandb", False)  # Default to False
-            if save_preds_to_wandb and self.logger is not None:
-                try:
-                    # Handle both single logger and list of loggers
-                    loggers = self.logger if isinstance(self.logger, (list, tuple)) else [self.logger]
-                    for logger in loggers:
-                        # Check if it's WandbLogger
-                        if hasattr(logger, "experiment") and hasattr(logger.experiment, "log"):
-                            try:
-                                # Convert summary_metrics_dict to dict format for wandb
-                                test_metrics_dict = {}
-                                for metric_name, value in summary_metrics_dict.items():
-                                    test_metrics_dict[f"test_{metric_name}"] = float(value)
-                                
-                                # Log metrics to wandb (only metrics, no artifacts to avoid upload delays)
-                                logger.experiment.log(test_metrics_dict)
-                                print(f"[Rank 0] Test metrics logged to wandb: {list(test_metrics_dict.keys())}")
-                                # Note: Artifact upload removed to prevent hanging. Files are still saved locally.
-                                sys.stdout.flush()
-                            except Exception as e:
-                                print(f"[Rank 0] Warning: Failed to log to wandb (files are still saved locally): {e}")
-                                sys.stdout.flush()
-                except Exception as e:
-                    print(f"[Rank 0] Warning: Wandb logging skipped (files are still saved locally): {e}")
-            sys.stdout.flush()
-
-            # Save result for external access
-        #broadcast summary_metrics to all processes
-        if is_distributed:
-            obj_list=[summary_metrics]
-            dist.broadcast_object_list(obj_list,src=0)
-            self.summary_metrics=obj_list[0]
+            # 跳过全零或常数行
+            if np.std(pred_row) > 0 and np.std(ref_row) > 0:
+                pcc, _ = pearsonr(pred_row, ref_row)
+                if not np.isnan(pcc):
+                    pcc_values.append(pcc)
+        
+        # 返回平均 PCC
+        if len(pcc_values) > 0:
+            return float(np.mean(pcc_values))
         else:
+            return 0.0
+
+    def _compute_ot_distances(self, predicted_adata, reference_adata, eval_features):
+        """
+        计算分布距离指标：
+        1) Energy Distance（无超参统计距离）
+        2) Sinkhorn Divergence（GeomLoss, Wasserstein-2）
+
+        按 cov_pert 分组后求平均
+        """
+        import numpy as np
+        import torch
+        from scipy.spatial.distance import cdist
+        from geomloss import SamplesLoss
+
+        # ================= Energy Distance =================
+        def energy_distance(X, Y):
+            d_xy = cdist(X, Y, metric='euclidean')
+            d_xx = cdist(X, X, metric='euclidean')
+            d_yy = cdist(Y, Y, metric='euclidean')
+
+            n = len(X)
+            m = len(Y)
+
+            term_xy = 2.0 * d_xy.mean()
+            term_xx = d_xx.sum() / (n * (n - 1))
+            term_yy = d_yy.sum() / (m * (m - 1))
+
+            return term_xy - term_xx - term_yy
+
+        # ================= Sinkhorn (GeomLoss) =================
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+
+        sinkhorn_loss = SamplesLoss(
+            loss="sinkhorn",   # Sinkhorn divergence（已 debiased）
+            p=2,               # squared Euclidean cost → Wasserstein-2
+            blur=0.05,         # 正则强度（默认稳健）
+            scaling=0.9,
+            backend="tensorized"
+        )
+
+        def sinkhorn_distance_geomloss(X, Y):
+            X_t = torch.tensor(X, dtype=torch.float32, device=device)
+            Y_t = torch.tensor(Y, dtype=torch.float32, device=device)
+            return sinkhorn_loss(X_t, Y_t).item()
+
+        # ================= 数据准备 =================
+        gene_mask = np.isin(predicted_adata.var_names, eval_features)
+
+        pred_X = np.asarray(predicted_adata.X[:, gene_mask])
+        ref_X = np.asarray(reference_adata.X[:, gene_mask])
+
+        pert_col = '_merged_pert_col_' if self.use_mix_pert else self.pert_key
+        cov_cols = [k for k in self.cov_keys if k not in self.result_avg_keys]
+
+        def get_group_key(obs, idx):
+            parts = [str(obs[pert_col].iloc[idx])]
+            for c in cov_cols:
+                parts.append(str(obs[c].iloc[idx]))
+            return "_".join(parts)
+
+        # 分组
+        pred_groups = {}
+        for i in range(len(predicted_adata)):
+            key = get_group_key(predicted_adata.obs, i)
+            pred_groups.setdefault(key, []).append(i)
+
+        ref_groups = {}
+        for i in range(len(reference_adata)):
+            key = get_group_key(reference_adata.obs, i)
+            ref_groups.setdefault(key, []).append(i)
+
+        # ================= 逐组计算 =================
+        energy_values = []
+        sinkhorn_values = []
+
+        common_groups = set(pred_groups.keys()) & set(ref_groups.keys())
+
+        for group_key in common_groups:
+            pred_idx = pred_groups[group_key]
+            ref_idx = ref_groups[group_key]
+
+            pred_samples = pred_X[pred_idx]
+            ref_samples = ref_X[ref_idx]
+
+            if len(pred_samples) < 2 or len(ref_samples) < 2:
+                continue
+
+            try:
+                e_dist = energy_distance(pred_samples, ref_samples)
+                s_dist = sinkhorn_distance_geomloss(pred_samples, ref_samples)
+
+                energy_values.append(float(e_dist))
+                sinkhorn_values.append(float(s_dist))
+
+            except Exception:
+                continue
+
+        mean_energy = float(np.mean(energy_values)) if energy_values else 0.0
+        mean_sinkhorn = float(np.mean(sinkhorn_values)) if sinkhorn_values else 0.0
+
+        return mean_energy, mean_sinkhorn
+
+    def _compute_pca_metrics(self, predicted_adata, reference_adata, eval_features, model_name, n_components=50):
+        """
+        在 PCA 降维空间下计算指标：Evaluation 聚合指标、样本级别 PCC、Energy Distance、Sinkhorn Divergence。
+        
+        使用参考数据拟合 PCA，然后将预测数据和参考数据都投影到该 PCA 空间中进行评估。
+        复用 Evaluation、_compute_sample_level_pcc 和 _compute_ot_distances 函数进行计算。
+        所有指标名称都带有 "pca_" 前缀。
+        
+        Args:
+            predicted_adata: 预测的 AnnData 对象
+            reference_adata: 参考的 AnnData 对象
+            eval_features: 用于评估的基因子集
+            model_name: 模型名称，用于 Evaluation
+            n_components: PCA 降维的维度数（默认 50）
+            
+        Returns:
+            dict: 包含以下指标的字典（所有指标名都带 "pca_" 前缀）
+                - pca_{metric}_{aggr}: Evaluation 计算的聚合指标
+                - pca_{metric}_rank_{aggr}: Evaluation 计算的排名指标（如配置了 rank）
+                - pca_pcc_no_aggr: PCA 空间下的样本级别 PCC
+                - pca_energy_distance: PCA 空间下的 Energy Distance
+                - pca_sinkhorn_divergency: PCA 空间下的 Sinkhorn Divergence
+        """
+        from sklearn.decomposition import PCA
+        
+        # ================= 数据准备 =================
+        gene_mask = np.isin(predicted_adata.var_names, eval_features)
+        pred_X = np.asarray(predicted_adata.X[:, gene_mask])
+        ref_X = np.asarray(reference_adata.X[:, gene_mask])
+        
+        # 确定实际使用的 PCA 维度（不超过特征数和样本数）
+        actual_n_components = min(n_components, pred_X.shape[1], ref_X.shape[0] - 1)
+        
+        # ================= PCA 降维 =================
+        # 使用参考数据拟合 PCA
+        pca = PCA(n_components=actual_n_components)
+        ref_pca = pca.fit_transform(ref_X)
+        pred_pca = pca.transform(pred_X)
+        
+        # ================= 构建 PCA 空间的临时 AnnData =================
+        # 创建 PCA 维度的特征名（作为 eval_features 传递给复用函数）
+        pca_feature_names = [f"PC{i+1}" for i in range(actual_n_components)]
+        
+        # 构建包含 PCA 数据的临时 AnnData，保留原始 obs 信息
+        pred_pca_adata = ad.AnnData(
+            X=pred_pca,
+            obs=predicted_adata.obs.copy(),
+            var=pd.DataFrame(index=pca_feature_names),
+        )
+        ref_pca_adata = ad.AnnData(
+            X=ref_pca,
+            obs=reference_adata.obs.copy(),
+            var=pd.DataFrame(index=pca_feature_names),
+        )
+        
+        pca_metrics_dict = {}
+        
+        # ================= 1. 使用 Evaluation 计算聚合指标（PCA 空间）=================
+        cov_cols = [k for k in self.cov_keys if k not in self.result_avg_keys]
+        
+        ev = Evaluation(
+            model_adatas=[pred_pca_adata],
+            model_names=[model_name],
+            ref_adata=ref_pca_adata,
+            pert_col='_merged_pert_col_' if self.use_mix_pert else self.pert_key,
+            cov_cols=cov_cols,
+            ctrl=self.control_val,
+            features=pca_feature_names,
+        )
+        
+        for aggr in self.unique_aggregations:
+            ev.aggregate(aggr_method=aggr)
+        
+        for eval_dict in self.evaluation_config.evaluation_pipelines:
+            aggr = eval_dict["aggregation"]
+            metric = eval_dict["metric"]
+            ev.evaluate(aggr_method=aggr, metric=metric)
+            
+            df = ev.evals[aggr][metric].copy()
+            avg = df.groupby("model").mean("metric")
+            pca_metrics_dict[f"pca_{metric}_{aggr}"] = avg["metric"].iloc[0]
+            
+            if eval_dict.get("rank"):
+                ev.evaluate_pairwise(aggr_method=aggr, metric=metric)
+                ev.evaluate_rank(aggr_method=aggr, metric=metric)
+                rank_df = ev.rank_evals[aggr][metric].copy()
+                avg_rank = rank_df.groupby("model").mean("rank")
+                pca_metrics_dict[f"pca_{metric}_rank_{aggr}"] = avg_rank["rank"].iloc[0]
+        
+        # ================= 2. 样本级别 PCC（PCA 空间）=================
+        pca_pcc = self._compute_sample_level_pcc(pred_pca_adata, ref_pca_adata, pca_feature_names)
+        pca_metrics_dict["pca_pcc_no_aggr"] = pca_pcc
+        
+        # ================= 3. OT 距离（PCA 空间）=================
+        pca_energy, pca_sinkhorn = self._compute_ot_distances(pred_pca_adata, ref_pca_adata, pca_feature_names)
+        pca_metrics_dict["pca_energy_distance"] = pca_energy
+        pca_metrics_dict["pca_sinkhorn_divergency"] = pca_sinkhorn
+        
+        return pca_metrics_dict
+
+    def _compute_deg_metrics(self, predicted_adata, reference_adata, eval_features, top_n_deg=50):
+        """
+        计算 DEG（差异表达基因）相关指标：IoU, Precision, Recall。
+        
+        对于每个 perturbation：
+        1. 在 predicted_adata 中计算该 pert 相对于 control 的 top DEG（按表达差异绝对值排序）
+        2. 在 reference_adata 中计算该 pert 相对于 control 的 top DEG
+        3. 计算两个 DEG 集合的 IoU, Precision, Recall
+        4. 在所有 pert 上求平均
+        
+        Args:
+            predicted_adata: 预测的 AnnData 对象
+            reference_adata: 参考的 AnnData 对象
+            eval_features: 用于评估的基因子集
+            top_n_deg: 每个 pert 选取的 top DEG 数量（默认 50）
+            
+        Returns:
+            tuple: (mean_iou, mean_precision, mean_recall)
+                - IoU = |pred_DEG ∩ ref_DEG| / |pred_DEG ∪ ref_DEG|
+                - Precision = |pred_DEG ∩ ref_DEG| / |pred_DEG|  (预测的 DEG 中有多少在真实 DEG 中)
+                - Recall = |pred_DEG ∩ ref_DEG| / |ref_DEG|  (真实的 DEG 中有多少被预测到)
+        """
+        # 获取 pert 列名
+        pert_col = '_merged_pert_col_' if self.use_mix_pert else self.pert_key
+        
+        # 获取 eval_features 对应的基因索引
+        gene_mask = np.isin(predicted_adata.var_names, eval_features)
+        
+        # 提取表达矩阵
+        pred_X = np.asarray(predicted_adata.X[:, gene_mask])
+        ref_X = np.asarray(reference_adata.X[:, gene_mask])
+        
+        # 获取基因名
+        genes = np.array(predicted_adata.var_names)[gene_mask]
+        
+        # 分离 control 和 perturbation 样本
+        pred_ctrl_mask = (predicted_adata.obs[pert_col] == self.control_val).values
+        ref_ctrl_mask = (reference_adata.obs[pert_col] == self.control_val).values
+        
+        # 计算 control 的平均表达
+        pred_ctrl_mean = pred_X[pred_ctrl_mask].mean(axis=0) if pred_ctrl_mask.sum() > 0 else np.zeros(pred_X.shape[1])
+        ref_ctrl_mean = ref_X[ref_ctrl_mask].mean(axis=0) if ref_ctrl_mask.sum() > 0 else np.zeros(ref_X.shape[1])
+        
+        # 获取所有 perturbation（排除 control）
+        all_perts = set(predicted_adata.obs[pert_col].unique()) | set(reference_adata.obs[pert_col].unique())
+        perts = [p for p in all_perts if p != self.control_val]
+        
+        iou_values = []
+        precision_values = []
+        recall_values = []
+        
+        for pert in perts:
+            # 获取该 pert 的样本 mask
+            pred_pert_mask = (predicted_adata.obs[pert_col] == pert).values
+            ref_pert_mask = (reference_adata.obs[pert_col] == pert).values
+            
+            # 跳过不存在的 pert
+            if pred_pert_mask.sum() == 0 or ref_pert_mask.sum() == 0:
+                continue
+            
+            # 计算该 pert 的平均表达
+            pred_pert_mean = pred_X[pred_pert_mask].mean(axis=0)
+            ref_pert_mean = ref_X[ref_pert_mask].mean(axis=0)
+            
+            # 计算差异（相对于 control 的绝对差值）
+            pred_diff = np.abs(pred_pert_mean - pred_ctrl_mean)
+            ref_diff = np.abs(ref_pert_mean - ref_ctrl_mean)
+            
+            # 确定实际使用的 top_n（不超过基因总数）
+            actual_top_n = min(top_n_deg, len(genes))
+            
+            # 选取 top N DEG（按差异绝对值排序，取最大的 N 个）
+            pred_top_indices = np.argsort(pred_diff)[-actual_top_n:]
+            ref_top_indices = np.argsort(ref_diff)[-actual_top_n:]
+            
+            pred_deg_set = set(genes[pred_top_indices])
+            ref_deg_set = set(genes[ref_top_indices])
+            
+            # 计算 IoU, Precision, Recall
+            intersection = len(pred_deg_set & ref_deg_set)
+            union = len(pred_deg_set | ref_deg_set)
+            
+            iou = intersection / union if union > 0 else 0.0
+            # Precision: 预测的 DEG 中有多少在真实 DEG 中
+            precision = intersection / len(pred_deg_set) if len(pred_deg_set) > 0 else 0.0
+            # Recall: 真实的 DEG 中有多少被预测到
+            recall = intersection / len(ref_deg_set) if len(ref_deg_set) > 0 else 0.0
+            
+            iou_values.append(iou)
+            precision_values.append(precision)
+            recall_values.append(recall)
+        
+        mean_iou = float(np.mean(iou_values)) if iou_values else 0.0
+        mean_precision = float(np.mean(precision_values)) if precision_values else 0.0
+        mean_recall = float(np.mean(recall_values)) if recall_values else 0.0
+        
+        return mean_iou, mean_precision, mean_recall
+
+    def _run_evaluation(self, predicted_adata, reference_adata, eval_features, model_name):
+        """Run evaluation and return summary metrics."""
+        if eval_features is None:
+            eval_features = reference_adata.var_names
+            
+        cov_cols = [k for k in self.cov_keys if k not in self.result_avg_keys]
+        
+        ev = Evaluation(
+            model_adatas=[predicted_adata],
+            model_names=[model_name],
+            ref_adata=reference_adata,
+            pert_col='_merged_pert_col_' if self.use_mix_pert else self.pert_key,
+            cov_cols=cov_cols,
+            ctrl=self.control_val,
+            features=eval_features,
+        )
+
+        for aggr in self.unique_aggregations:
+            ev.aggregate(aggr_method=aggr)
+
+        summary_metrics_dict = {}
+        for eval_dict in self.evaluation_config.evaluation_pipelines:
+            aggr = eval_dict["aggregation"]
+            metric = eval_dict["metric"]
+            ev.evaluate(aggr_method=aggr, metric=metric)
+
+            df = ev.evals[aggr][metric].copy()
+            avg = df.groupby("model").mean("metric")
+            summary_metrics_dict[f"{metric}_{aggr}"] = avg["metric"]
+
+            if eval_dict.get("rank"):
+                ev.evaluate_pairwise(aggr_method=aggr, metric=metric)
+                ev.evaluate_rank(aggr_method=aggr, metric=metric)
+                rank_df = ev.rank_evals[aggr][metric].copy()
+                avg_rank = rank_df.groupby("model").mean("rank")
+                summary_metrics_dict[f"{metric}_rank_{aggr}"] = avg_rank["rank"]
+
+        # ====== 样本级别 PCC (no-aggr) 计算，不使用 evaluation 包 ======
+        sample_pcc = self._compute_sample_level_pcc(predicted_adata, reference_adata, eval_features)
+        summary_metrics_dict["pcc_no_aggr"] = pd.Series({model_name: sample_pcc})
+
+        # ====== OT 距离计算 (MMD, Sinkhorn)，按 cov_pert 分组后求平均 ======
+        try:
+            mean_mmd, mean_sinkhorn = self._compute_ot_distances(predicted_adata, reference_adata, eval_features)
+            summary_metrics_dict["energy_distance"] = pd.Series({model_name: mean_mmd})
+            summary_metrics_dict["sinkhorn_divergency"] = pd.Series({model_name: mean_sinkhorn})
+        except Exception as e:
+            print(f"Warning: OT distance computation failed: {e}")
+            summary_metrics_dict["energy_distance"] = pd.Series({model_name: 0.0})
+            summary_metrics_dict["sinkhorn_divergency"] = pd.Series({model_name: 0.0})
+
+        # ====== PCA 空间下的指标计算 (Evaluation聚合指标, PCC, Energy Distance, Sinkhorn) ======
+        try:
+            pca_metrics = self._compute_pca_metrics(
+                predicted_adata, reference_adata, eval_features, model_name, n_components=50
+            )
+            # 将所有 PCA 指标添加到 summary_metrics_dict（已带 "pca_" 前缀）
+            for metric_name, metric_value in pca_metrics.items():
+                summary_metrics_dict[metric_name] = pd.Series({model_name: metric_value})
+        except Exception as e:
+            print(f"Warning: PCA metrics computation failed: {e}")
+            # 设置默认的 PCA 指标为 0.0
+            summary_metrics_dict["pca_pcc_no_aggr"] = pd.Series({model_name: 0.0})
+            summary_metrics_dict["pca_energy_distance"] = pd.Series({model_name: 0.0})
+            summary_metrics_dict["pca_sinkhorn_divergency"] = pd.Series({model_name: 0.0})
+
+        # ====== DEG 指标计算 (IoU, Precision, Recall)，按 pert 分组后求平均 ======
+        try:
+            deg_iou, deg_precision, deg_recall = self._compute_deg_metrics(
+                predicted_adata, reference_adata, eval_features, top_n_deg=50
+            )
+            summary_metrics_dict["deg_iou"] = pd.Series({model_name: deg_iou})
+            summary_metrics_dict["deg_precision"] = pd.Series({model_name: deg_precision})
+            summary_metrics_dict["deg_recall"] = pd.Series({model_name: deg_recall})
+        except Exception as e:
+            print(f"Warning: DEG metrics computation failed: {e}")
+            summary_metrics_dict["deg_iou"] = pd.Series({model_name: 0.0})
+            summary_metrics_dict["deg_precision"] = pd.Series({model_name: 0.0})
+            summary_metrics_dict["deg_recall"] = pd.Series({model_name: 0.0})
+
+        summary_metrics = pd.DataFrame(summary_metrics_dict).T.applymap(
+            lambda x: float(np.format_float_positional(
+                x, precision=4, unique=False, fractional=False, trim="k"
+            ))
+        )
+
+        return ev, summary_metrics, summary_metrics_dict
+
+    def _get_output_dir(self):
+        """Get output directory from hydra or logger."""
+        try:
+            return HydraConfig.get().runtime.output_dir
+        except Exception:
+            if self.logger is not None:
+                logger_obj = self.logger[0] if isinstance(self.logger, (list, tuple)) and len(self.logger) > 0 else self.logger
+                return getattr(logger_obj, "save_dir", None) or self.evaluation_config.save_dir
+            return self.evaluation_config.save_dir
+
+    def _save_results(self, ev, summary_metrics, predicted_adata, output_dir):
+        """Save evaluation results, summary metrics, and predictions."""
+        summary_dir = os.path.join(output_dir, "summary")
+        os.makedirs(summary_dir, exist_ok=True)
+        os.makedirs(self.evaluation_config.save_dir, exist_ok=True)
+
+        ev.save(self.evaluation_config.save_dir)
+
+        # Save summary CSV
+        csv_path = os.path.join(self.evaluation_config.save_dir, "summary.csv")
+        summary_metrics.to_csv(csv_path, index_label="metric")
+
+        ckpt_type = getattr(self, "current_test_ckpt_type", None)
+        suffix = f"_{ckpt_type}" if ckpt_type and ckpt_type != "unknown" else ""
+        
+        summary_csv_path = os.path.join(summary_dir, f"summary_metrics{suffix}.csv")
+        summary_metrics.to_csv(summary_csv_path, index_label="metric")
+
+        # Save predictions
+        pred_h5ad_path = os.path.join(summary_dir, f"predictions{suffix}.h5ad")
+        try:
+            predicted_adata.write(pred_h5ad_path)
+        except OSError as e:
+            if e.errno == 122:
+                print(f"WARNING: Disk quota exceeded, skipping prediction save.")
+            else:
+                print(f"WARNING: Failed to save predictions: {e}")
+        except Exception as e:
+            print(f"WARNING: Failed to save predictions: {e}")
+
+        return csv_path, summary_dir
+
+    def _log_to_wandb(self, summary_metrics_dict):
+        """Log metrics to wandb if enabled."""
+        save_preds_to_wandb = self.evaluation_config.get("save_predictions_to_wandb", False)
+        if not save_preds_to_wandb or self.logger is None:
+            return
+
+        try:
+            loggers = self.logger if isinstance(self.logger, (list, tuple)) else [self.logger]
+            for logger in loggers:
+                if hasattr(logger, "experiment") and hasattr(logger.experiment, "log"):
+                    test_metrics_dict = {f"test_{k}": float(v) for k, v in summary_metrics_dict.items()}
+                    logger.experiment.log(test_metrics_dict)
+        except Exception:
+            pass  # Silently skip wandb logging errors
+
+    def _run_evaluation_per_cellclass(self, predicted_adata, reference_adata, model_name, output_dir):
+        """
+        针对每个 cellclass 分别运行评估（使用 obs['cellclass'] 和 cellclass_mask_dict）。
+        
+        此函数根据数据中是否存在 cellclass 分组信息，决定采用不同的评估策略：
+        - 若无 cellclass 信息：对全量数据进行统一评估
+        - 若有 cellclass 信息：按每个 cellclass 分组评估，并汇总结果
+        
+        Args:
+            predicted_adata (AnnData): 模型预测的表达矩阵，obs 中应包含 'cellclass' 列（如适用）
+            reference_adata (AnnData): 参考（真实）表达矩阵，obs 中应包含 'cellclass' 列（如适用）
+            model_name (str): 模型名称，用于评估报告中标识模型
+            output_dir (str): 输出目录的根路径，评估结果将保存于此
+        
+        Returns:
+            tuple: (summary_metrics, summary_metrics_dict, csv_path)
+                - summary_metrics (pd.DataFrame | None): 所有 cellclass 的平均评估指标 DataFrame
+                - summary_metrics_dict (dict): 按 cellclass 分组的指标字典 {cellclass: {metric: value}}
+                - csv_path (str | None): 汇总 CSV 文件的保存路径
+        
+        输出目录结构（当有 cellclass 分组时）:
+        -----------------------------------------------
+        {output_dir}/
+        ├── cellclass_evaluation/           # 按 cellclass 分组的评估结果
+        │   ├── {cellclass_1}/              # 第一个 cellclass 的结果目录
+        │   │   ├── summary.csv             # 该 cellclass 的评估指标摘要
+        │   │   ├── predictions.h5ad        # 该 cellclass 的预测结果 AnnData
+        │   │   └── ... (Evaluation.save() 生成的其他文件)
+        │   ├── {cellclass_2}/              # 第二个 cellclass 的结果目录
+        │   │   └── ...
+        │   └── ...
+        └── summary/                        # 汇总目录
+            ├── summary_by_cellclass.csv    # 所有 cellclass 的详细指标（含 cellclass 列）
+            └── summary_avg.csv             # 所有 cellclass 的平均指标
+        
+        输出目录结构（当无 cellclass 分组时）:
+        -----------------------------------------------
+        {output_dir}/
+        └── summary/
+            ├── summary_metrics_{ckpt_type}.csv  # 评估指标摘要
+            └── predictions_{ckpt_type}.h5ad     # 预测结果 AnnData
+        {evaluation_config.save_dir}/
+            ├── summary.csv                      # 评估指标摘要（复制）
+            └── ... (Evaluation.save() 生成的其他文件)
+        """
+        # ========== 步骤1：检查是否需要按 cellclass 分组评估 ==========
+        # 如果 reference_adata.obs 中没有 'cellclass' 列，或者没有配置 cellclass_mask_dict，
+        # 则采用全量评估模式，直接对所有数据进行统一评估
+        if 'cellclass' not in reference_adata.obs or not getattr(self, 'cellclass_mask_dict', None):
+            ev, metrics, mdict = self._run_evaluation(
+                predicted_adata, reference_adata, None, model_name
+            )
+            return metrics, mdict, self._save_results(ev, metrics, predicted_adata, output_dir)[0]
+        
+        # ========== 步骤2：获取预测和参考数据中共有的 cellclass 列表 ==========
+        # 取交集确保只评估两者都存在的 cellclass，并按字母顺序排序
+        groups = sorted(set(predicted_adata.obs['cellclass'].unique()) & set(reference_adata.obs['cellclass'].unique()))
+        all_metrics, all_mdict = {}, {}  # 存储每个 cellclass 的评估结果
+        cc_dir = os.path.join(output_dir, "cellclass_evaluation")  # cellclass 评估结果的根目录
+        
+        # ========== 步骤3：遍历每个 cellclass 进行独立评估 ==========
+        for cc in groups:
+            # 3.1 按 cellclass 筛选子集
+            _cellclass_mask=self.cellclass_mask_dict.get(cc,None)
+            
+            pred_sub = predicted_adata[predicted_adata.obs['cellclass'] == cc]
+            ref_sub = reference_adata[reference_adata.obs['cellclass'] == cc]
+            
+            # 3.2 跳过空数据集（无预测或无参考样本）
+            if pred_sub.n_obs == 0 or ref_sub.n_obs == 0:
+                continue
+            
+            try:
+                # 3.4 对该 cellclass 子集运行评估
+                # 确保 _cellclass_mask 是一维 numpy 数组，用于正确索引 gene_names
+                if _cellclass_mask is not None:
+                    _cellclass_mask = np.asarray(_cellclass_mask).flatten()
+                gene_names_arr = np.array(self.gene_names)
+                eval_gene_names = gene_names_arr[_cellclass_mask] if _cellclass_mask is not None else gene_names_arr
+                ev, metrics, mdict = self._run_evaluation(pred_sub, ref_sub,
+                                                          eval_gene_names, model_name)
+                # 3.5 创建该 cellclass 的保存目录（将 '/' 替换为 '_' 避免路径问题）
+                save_dir = os.path.join(cc_dir, str(cc).replace('/', '_'))
+                os.makedirs(save_dir, exist_ok=True)
+                
+                # 3.6 保存评估结果
+                ev.save(save_dir)  # 保存 Evaluation 对象的完整结果
+                metrics.to_csv(os.path.join(save_dir, "summary.csv"), index_label="metric")  # 保存指标摘要
+                
+                # 3.7 尝试保存预测的 AnnData（可能因磁盘空间等问题失败，静默处理）
+                try:
+                    pred_sub.write(os.path.join(save_dir, "predictions.h5ad"))
+                except Exception:
+                    pass
+                
+                # 3.8 记录该 cellclass 的评估结果
+                all_metrics[cc], all_mdict[cc] = metrics, mdict
+                print(f"[{cc}] genes={pred_sub.n_vars}, saved to {save_dir}")
+                
+            except Exception as e:
+                # 记录失败的 cellclass（不中断整体流程）
+                print(f"[{cc}] failed: {e}")
+        
+        # ========== 步骤4：检查是否有成功的评估结果 ==========
+        if not all_metrics:
+            return None, {}, None
+        
+        # ========== 步骤5：汇总所有 cellclass 的评估结果 ==========
+        summary_dir = os.path.join(output_dir, "summary")
+        os.makedirs(summary_dir, exist_ok=True)
+        
+        # 5.1 保存按 cellclass 分组的详细指标表（每行带有 cellclass 标签）
+        pd.concat([df.assign(cellclass=cc) for cc, df in all_metrics.items()]).to_csv(
+            os.path.join(summary_dir, "summary_by_cellclass.csv"), index_label="metric"
+        )
+        
+        # 5.2 计算并保存所有 cellclass 的平均指标
+        avg = pd.concat(all_metrics.values()).groupby(level=0).mean()
+        avg.to_csv(os.path.join(summary_dir, "summary_avg.csv"), index_label="metric")
+        
+        return avg, all_mdict, os.path.join(summary_dir, "summary_by_cellclass.csv")
+
+    def on_test_end(self) -> None:
+        """
+        测试阶段结束后的回调函数，负责汇总预测结果并进行评估。
+        
+        此函数是 PyTorch Lightning 的生命周期钩子，在所有测试批次处理完成后自动调用。
+        主要完成以下工作：
+        1. 从所有分布式进程收集预测结果
+        2. 构建 AnnData 对象并运行评估
+        3. 保存评估结果和预测数据
+        4. 同步评估指标到所有进程
+        5. 清理内存资源
+        
+        分布式训练说明:
+        ----------------
+        - 在多 GPU/多节点训练时，每个进程只持有部分预测结果
+        - 本函数通过 all_gather_object 收集所有进程的预测结果
+        - 评估仅在 rank 0 进程执行，然后广播结果给其他进程
+        - 使用 barrier 同步确保所有进程在继续前达到一致状态
+        
+        完整输出目录结构:
+        ----------------
+        {output_dir}/                           # 由 Hydra 或 Logger 决定的根目录
+        ├── cellclass_evaluation/               # 按 cellclass 分组的评估结果（如适用）
+        │   ├── {cellclass_1}/
+        │   │   ├── summary.csv                 # 该 cellclass 的评估指标
+        │   │   ├── predictions.h5ad            # 该 cellclass 的预测 AnnData
+        │   │   ├── aggregations/               # Evaluation.save() 生成的聚合结果
+        │   │   │   ├── {aggr_method_1}.h5ad
+        │   │   │   └── ...
+        │   │   └── evaluations/                # Evaluation.save() 生成的评估详情
+        │   │       ├── {aggr_method}_{metric}.csv
+        │   │       └── ...
+        │   ├── {cellclass_2}/
+        │   │   └── ...
+        │   └── ...
+        └── summary/                            # 汇总目录
+            ├── summary_by_cellclass.csv        # 所有 cellclass 的详细指标（有 cellclass 分组时）
+            ├── summary_avg.csv                 # 所有 cellclass 的平均指标（有 cellclass 分组时）
+            ├── summary_metrics_{ckpt_type}.csv # 评估指标摘要（无 cellclass 分组时）
+            └── predictions_{ckpt_type}.h5ad    # 完整预测结果（无 cellclass 分组时）
+        
+        {evaluation_config.save_dir}/           # 配置指定的评估保存目录
+        ├── summary.csv                         # 评估指标摘要副本
+        ├── aggregations/                       # 聚合后的表达数据
+        │   └── ...
+        └── evaluations/                        # 评估详细结果
+            └── ...
+        
+        Attributes Modified:
+            self.summary_metrics: 更新为最终评估指标 DataFrame
+            self.preds_list: 清空以释放内存
+        
+        Note:
+            - 此函数依赖 on_test_start() 初始化的 self.preds_list
+            - 依赖 test_step() 在每个批次后填充的预测结果
+        """
+        import torch.distributed as dist
+        super().on_test_end()
+        
+        # ========== 步骤1：准备工作 ==========
+        # 从类名提取模型名称（用于评估报告标识）
+        # 例如：<class 'perturbench.models.MyModel'> -> "MyModel"
+        model_name = str(self.__class__).split(".")[-1].replace("'>", "")
+        
+        # 收集所有分布式进程的预测结果
+        # gathered_data: List[(np.ndarray, pd.DataFrame)]，每个元素是一个进程的 (表达矩阵, obs DataFrame)
+        # is_distributed: bool，是否处于分布式训练模式
+        # rank: int，当前进程的 rank（0 为主进程）
+        gathered_data, is_distributed, rank = self._gather_predictions()
+        summary_metrics, summary_metrics_dict = None, {}
+
+        # ========== 步骤2：在主进程 (rank 0) 执行评估 ==========
+        # 仅在 rank 0 执行评估，避免重复计算和 I/O 冲突
+        if rank == 0:
+            # 2.1 构建 AnnData 对象
+            # predicted_adata: 模型预测的表达矩阵 + 对照组数据
+            # reference_adata: 真实扰动数据 + 对照组数据
+            predicted_adata, reference_adata, _ = self._build_anndata(gathered_data)
+            
+            # 2.2 获取输出目录（优先从 Hydra 配置获取，否则从 Logger 或配置文件获取）
+            output_dir = self._get_output_dir()
+
+            # 2.3 按 cellclass 分组运行评估（或全量评估，取决于数据配置）
+            summary_metrics, summary_metrics_dict, csv_path = self._run_evaluation_per_cellclass(
+                predicted_adata, reference_adata, model_name, output_dir
+            )
+
+            # 2.4 打印评估摘要（如果配置允许）
+            if self.evaluation_config.print_summary and summary_metrics is not None:
+                print(f"\n===== Average Summary Metrics =====\n{summary_metrics}\n")
+            if csv_path:
+                print(f"Evaluation finished. Results saved to {csv_path}")
+
+            # 2.5 记录到 Weights & Biases（如果启用）
+            # 将所有 cellclass 的指标合并求平均后记录
+            if summary_metrics_dict:
+                avg_dict = {}
+                for cc_metrics in summary_metrics_dict.values():
+                    for k, v in cc_metrics.items():
+                        # 将各指标值收集到列表中
+                        avg_dict.setdefault(k, []).append(float(v) if hasattr(v, '__float__') else v)
+                # 计算平均值并记录到 wandb
+                self._log_to_wandb({k: np.mean(v) for k, v in avg_dict.items()})
+
+        # ========== 步骤3：同步评估结果到所有进程 ==========
+        # 在分布式场景下，确保所有进程都能访问 summary_metrics
+        # 这对于后续可能依赖评估结果的逻辑很重要（如模型选择、早停等）
+        if is_distributed:
+            # 使用 broadcast_object_list 从 rank 0 广播 summary_metrics 到所有进程
+            obj_list = [summary_metrics]
+            dist.broadcast_object_list(obj_list, src=0)
+            self.summary_metrics = obj_list[0]
+            
+            # 同步屏障：确保所有进程都收到广播后再继续
+            # 防止快的进程过早进入下一阶段（如开始新的训练轮次）
+            dist.barrier()
+        else:
+            # 非分布式模式，直接赋值即可
             self.summary_metrics = summary_metrics
 
-        # ---- Synchronize and cleanup ----
-        if is_distributed:
-            dist.barrier()
-
+        # ========== 步骤4：清理资源 ==========
+        # 释放预测列表占用的内存（可能很大，特别是测试集较大时）
         self.preds_list = []
+        
+        # 手动触发垃圾回收，确保内存及时释放
+        # 在 GPU 训练场景下尤为重要，避免后续操作因内存不足而失败
         gc.collect()
 
     def transfer_batch_to_device(self, batch, device, dataloader_idx):

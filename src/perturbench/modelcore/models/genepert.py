@@ -60,6 +60,7 @@ class GenePert(PerturbationModel):
                 gene_pert_dim=self.gene_pert_dim,
                 drug_pert_dim=self.drug_pert_dim,
                 env_pert_dim=self.env_pert_dim,
+                crispr_pert_dim=self.crispr_pert_dim,
                 final_embed_dim=self.hidden_size,
             )
             self.embedding_dim = self.hidden_size
@@ -140,26 +141,9 @@ class GenePert(PerturbationModel):
 
         # Use expression mask for loss calculation - only compute loss on expressed genes
         mask = self._get_mask(batch)
-        if mask is not None:
-            mask = mask.to(predicted_expression.device)
-            masked_loss = F.mse_loss(
-                predicted_expression,
-                observed_expression,
-                reduction="none",
-            )
-            # Compute per-batch loss on valid genes only
-            valid = mask.sum(dim=1)  # [batch]
-            loss_per_batch = (masked_loss * mask).sum(dim=1)  # [batch]
-            loss = (loss_per_batch / valid).nanmean()
-        else:
-            # Fallback to standard MSE
-            loss = F.mse_loss(predicted_expression, observed_expression)
+        loss=self.auto_mse(predicted_expression, observed_expression, mask)
 
         self.log("train_loss", loss, prog_bar=True, logger=True, batch_size=len(batch), on_step=True, on_epoch=True)
-
-        # Compute training PCC
-        train_pcc = self._compute_masked_pcc(predicted_expression, observed_expression, mask)
-        self.log("train_PCC", train_pcc, prog_bar=True, logger=True, batch_size=len(batch), on_step=True, on_epoch=True)
 
         return loss
 
@@ -191,25 +175,9 @@ class GenePert(PerturbationModel):
 
         # Use expression mask for loss calculation
         mask = self._get_mask(batch)
-        if mask is not None:
-            mask = mask.to(predicted_expression.device)
-            masked_loss = F.mse_loss(
-                predicted_expression,
-                observed_expression,
-                reduction="none",
-            )
-            valid = mask.sum(dim=1)
-            loss_per_batch = (masked_loss * mask).sum(dim=1)
-            loss = (loss_per_batch / valid).nanmean()
-        else:
-            # Fallback to standard MSE
-            loss = F.mse_loss(predicted_expression, observed_expression)
+        loss=self.auto_mse(predicted_expression, observed_expression, mask)
 
         self.log("val_loss", loss, prog_bar=True, logger=True, batch_size=len(batch), on_step=True, on_epoch=True)
-
-        # Compute validation PCC
-        val_pcc = self._compute_masked_pcc(predicted_expression, observed_expression, mask)
-        self.log("val_PCC", val_pcc, prog_bar=True, logger=True, batch_size=len(batch), on_step=True, on_epoch=True)
 
         return loss
 

@@ -33,7 +33,7 @@ mask_attn: False
 use_effect_gating_token: False
 use_basal_projection: False
 distributional_loss: energy
-gene_decoder_bool: False
+gene_decoder_bool: ${model.use_cell_emb}
 init_from: null
 transformer_backbone_key: llama
 transformer_backbone_kwargs:

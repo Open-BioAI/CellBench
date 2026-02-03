@@ -47,7 +47,7 @@ class DecoderOnly(PerturbationModel):
     def __init__(
         self,
         n_layers=2,
-        encoder_width=128,
+        encoder_width=512,
         softplus_output=True,
         use_covs: bool = False,  # Unified covariate usage parameter
         use_perturbations=True,
@@ -110,21 +110,21 @@ class DecoderOnly(PerturbationModel):
 
 
         n_total_covariates = datamodule.train_dataset.transform.n_total_covs
-        n_perts = datamodule.train_dataset.transform.n_perts
 
         self.pert_encoder = MixedPerturbationEncoder(
                 gene_pert_dim=self.gene_pert_dim,
                 drug_pert_dim=self.drug_pert_dim,
                 env_pert_dim=self.env_pert_dim,
-                final_embed_dim=n_perts,
+                crispr_pert_dim=self.crispr_pert_dim,
+                final_embed_dim=encoder_width,
             )
 
         if use_covs and use_perturbations:
-            decoder_input_dim = n_total_covariates + n_perts
+            decoder_input_dim = n_total_covariates + encoder_width
         elif use_covs:
             decoder_input_dim = n_total_covariates
         else:
-            decoder_input_dim = n_perts
+            decoder_input_dim =encoder_width
 
         self.decoder = MLP(decoder_input_dim, encoder_width, self.n_genes, n_layers)
         self.softplus_output = softplus_output
@@ -132,11 +132,10 @@ class DecoderOnly(PerturbationModel):
         self.use_perturbations = use_perturbations
 
     def _get_control_expression(self, batch: Batch) -> torch.Tensor:
-        if hasattr(batch, "controls"):
-            return batch.controls
-        if hasattr(batch, "control_cell_counts"):
+        if self.use_cell_emb:
+            return batch.control_cell_emb
+        else:
             return batch.control_cell_counts
-        return batch.control_cell_emb
     
     def _encode_perturbation(self, batch: Batch) -> torch.Tensor:
         if self.pert_encoder is not None:
@@ -176,27 +175,8 @@ class DecoderOnly(PerturbationModel):
 
         # Use expression mask for loss calculation - only compute loss on expressed genes
         mask = self._get_mask(batch)
-        if mask is not None:
-            mask = mask.to(predicted_perturbed_expression.device)
-            masked_loss = F.mse_loss(
-                predicted_perturbed_expression,
-                observed_perturbed_expression,
-                reduction="none",
-            )
-            # 这样才算给每个batch上有效gene算好mse_loss以后在batch上求平均
-            valid = mask.sum(dim=1)  # 指定维度[batch]
-            loss_per_batch = (masked_loss * mask).sum(dim=1)  # [batch]
-            loss = (loss_per_batch / valid).nanmean()
-        else:
-            # Fallback to standard MSE
-            loss = F.mse_loss(predicted_perturbed_expression, observed_perturbed_expression)
-
+        loss=self.auto_mse(predicted_perturbed_expression, observed_perturbed_expression, mask)
         self.log("train_loss", loss, prog_bar=True, logger=True, batch_size=len(batch), on_step=True, on_epoch=True)
-
-        # Compute training PCC (use mask if enabled)
-        train_pcc = self._compute_masked_pcc(predicted_perturbed_expression, observed_perturbed_expression, mask)
-        self.log("train_PCC", train_pcc, prog_bar=True, logger=True, batch_size=len(batch), on_step=True, on_epoch=True)
-
         return loss
 
     def validation_step(self, data_tuple, batch_idx: int):
@@ -213,27 +193,9 @@ class DecoderOnly(PerturbationModel):
 
         # Use expression mask for loss calculation - only compute loss on expressed genes
         mask = self._get_mask(batch)
-        if mask is not None:
-            mask = mask.to(predicted_perturbed_expression.device)
-            masked_loss = F.mse_loss(
-                predicted_perturbed_expression,
-                observed_perturbed_expression,
-                reduction="none",
-            )
-            valid = mask.sum(dim=1)
-            val_loss_per_batch = (masked_loss * mask).sum(dim=1)
-            val_loss = (val_loss_per_batch / valid).nanmean()
-        else:
-            # Fallback to standard MSE
-            val_loss = F.mse_loss(
-                predicted_perturbed_expression, observed_perturbed_expression
-            )
+        val_loss=self.auto_mse(predicted_perturbed_expression, observed_perturbed_expression, mask)
 
         self.log("val_loss", val_loss, prog_bar=True, logger=True, batch_size=len(batch), on_step=True, on_epoch=True)
-
-        # Compute validation PCC (use mask if enabled)
-        val_pcc = self._compute_masked_pcc(predicted_perturbed_expression, observed_perturbed_expression, mask)
-        self.log("val_PCC", val_pcc, prog_bar=True, logger=True, batch_size=len(batch), on_step=True, on_epoch=True)
 
         return val_loss
 

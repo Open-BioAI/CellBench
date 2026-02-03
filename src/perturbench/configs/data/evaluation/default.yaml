@@ -6,6 +6,18 @@ evaluation_pipelines:
   - aggregation: logfc
     metric: cosine
     rank: True
+
+  - aggregation: delta
+    metric: pearson
+    rank: True
+  
+  - aggregation: average
+    metric: pearson
+    rank: True
+
+  - aggregation: logfc
+    metric: spearman
+    rank: False
   
 save_evaluation: True
 save_dir: "${paths.output_dir}/evaluation/"

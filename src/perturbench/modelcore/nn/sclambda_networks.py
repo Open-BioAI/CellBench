@@ -14,7 +14,8 @@ class scLAMBDANet(nn.Module):
 
     def __init__(
         self,
-        x_dim: int,
+        input_dim: int,
+        output_dim: int,
         p_dim: int,
         latent_dim: int = 30,
         hidden_dim: int = 512,
@@ -27,7 +28,7 @@ class scLAMBDANet(nn.Module):
 
         # Encoders
         self.Encoder_x = Encoder(
-            input_dim=x_dim,
+            input_dim=input_dim,
             hidden_dim=hidden_dim,
             latent_dim=latent_dim,
             VAE=True
@@ -43,7 +44,7 @@ class scLAMBDANet(nn.Module):
         self.Decoder_x = Decoder(
             latent_dim=latent_dim,
             hidden_dim=hidden_dim,
-            output_dim=x_dim
+            output_dim=output_dim
         )
         # Use p_dim_decoder for decoder output dimension, default to p_dim if not specified
         p_dim_decoder = p_dim_decoder if p_dim_decoder is not None else p_dim

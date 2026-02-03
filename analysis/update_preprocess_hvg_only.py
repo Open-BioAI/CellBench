@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Run preprocess() on a configurable list of datasets.
+Run preprocess() on a single h5ad file.
 Modified version: Only selects Highly Variable Genes (HVG), not DEGs.
 """
 
@@ -11,7 +11,6 @@ import re
 import sys
 import time
 from typing import Iterable, Optional
-from multiprocessing import Pool, cpu_count
 
 import scanpy as sc
 from scipy import sparse
@@ -27,45 +26,16 @@ else:
 
 # Import the new HVG-only preprocess function from the same directory
 from perturbench.analysis.preprocess_hvg_only import preprocess_hvg_only
-# Default directories (can be overridden via command line)
-DEFAULT_CELL_LINE_DIR = Path("/fs-computility-new/upzd_share/maoxinjie/AIVC/data/cell_line")
-DEFAULT_NORMALIZED_DIR = DEFAULT_CELL_LINE_DIR / "normalized"
-
-# Default preprocess parameters can be overridden per cell line via CUSTOM_PARAMS
+# Default preprocess parameters
 DEFAULT_CFG = {
     "perturbation_key": "perturbation",
     "control_value": "control",
-    # "covariate_keys": ["dataset"],
     "covariate_keys": ["dataset"],
     "combination_delimiter": "+",
     "highly_variable": 2000,
     "degs": 0,  # Set to 0 to skip DEG calculation (we only want HVG)
     "min_cells_per_group": 2,
 }
-
-# Example:
-# CUSTOM_PARAMS = {
-#     "Jurkat": {"degs": 100, "covariate_keys": ["batch"]},
-# }
-CUSTOM_PARAMS = {}
-
-
-def build_datasets(cell_line_dir: Path, normalized_dir: Path) -> list[dict]:
-    """Build list of dataset configurations from input directory."""
-    datasets = []
-    for h5ad_path in sorted(cell_line_dir.glob("*.h5ad")):
-        name = h5ad_path.stem
-        cfg = DEFAULT_CFG.copy()
-        cfg.update(CUSTOM_PARAMS.get(name, {}))
-        cfg.update(
-            {
-                "name": name,
-                "input_path": str(h5ad_path),
-                "output_path": str(normalized_dir / f"{name}_processed.h5ad"),
-            }
-        )
-        datasets.append(cfg)
-    return datasets
 
 
 def merge_duplicate_var_names(adata, dataset_name=None):
@@ -223,18 +193,45 @@ def infer_control_value(candidates: Iterable[str], delimiter: str = "+") -> Opti
     
     return None
 
-def run_preprocess(cfg):
+def run_preprocess(
+    input_file: Path,
+    output_file: Path,
+    perturbation_key: str = "perturbation",
+    control_value: str = "control",
+    covariate_keys: list[str] = None,
+    combination_delimiter: str = "+",
+    highly_variable: int = 2000,
+    min_cells_per_group: int = 2,
+    max_perturbations: int = 500,
+):
+    """
+    Run preprocess on a single h5ad file.
+    
+    Args:
+        input_file: Path to input h5ad file
+        output_file: Path to output h5ad file
+        perturbation_key: Column name for perturbations (default: "perturbation")
+        control_value: Value indicating control cells (default: "control")
+        covariate_keys: List of covariate column names (default: ["dataset"])
+        combination_delimiter: Delimiter for perturbation combinations (default: "+")
+        highly_variable: Number of highly variable genes to select (default: 2000)
+        min_cells_per_group: Minimum cells per perturbation group (default: 2)
+        max_perturbations: Maximum number of perturbations to keep, selected by cell count (default: 500)
+    """
+    if covariate_keys is None:
+        covariate_keys = ["dataset"]
+    
     start_time = time.time()
-    dataset_name = cfg['name']
+    dataset_name = input_file.stem
     print(f"\n=== Processing {dataset_name} ===")
-    output_path = Path(cfg["output_path"])
-    if output_path.exists():
-        print(f"[{dataset_name}] Output already exists at {output_path}, skipping.")
+    
+    if output_file.exists():
+        print(f"[{dataset_name}] Output already exists at {output_file}, skipping.")
         return
 
-    print(f"[{dataset_name}] Loading data from: {cfg['input_path']}")
+    print(f"[{dataset_name}] Loading data from: {input_file}")
     load_start = time.time()
-    adata = sc.read_h5ad(cfg["input_path"])
+    adata = sc.read_h5ad(input_file)
     load_time = time.time() - load_start
     print(f"[{dataset_name}] Loaded: {adata.shape[0]:,} cells × {adata.shape[1]:,} genes (took {load_time:.1f}s)")
     
@@ -297,7 +294,6 @@ def run_preprocess(cfg):
         )
         return
     
-    perturbation_key = cfg["perturbation_key"]
     if perturbation_key not in adata.obs.columns:
         print(
             f"[{dataset_name}] Perturbation key '{perturbation_key}' not found. "
@@ -306,8 +302,6 @@ def run_preprocess(cfg):
         return
     
     available_controls = adata.obs[perturbation_key].unique().tolist()
-    control_value = cfg["control_value"]
-    combination_delimiter = cfg.get("combination_delimiter", "+")
     
     if control_value not in available_controls:
         inferred = infer_control_value(available_controls, delimiter=combination_delimiter)
@@ -316,7 +310,7 @@ def run_preprocess(cfg):
                 f"[{dataset_name}] Control '{control_value}' not found; "
                 f"using inferred '{inferred}'."
             )
-            cfg["control_value"] = inferred
+            control_value = inferred
         else:
             print(
                 f"[{dataset_name}] Could not find or infer control. "
@@ -346,19 +340,19 @@ def run_preprocess(cfg):
     else:
         print(f"[{dataset_name}] All perturbations have >= 10 cells")
 
-    # Select top 500 perturbations by cell count
-    print(f"[{dataset_name}] Selecting top 500 perturbations by cell count...")
+    # Select top N perturbations by cell count
+    print(f"[{dataset_name}] Selecting top {max_perturbations} perturbations by cell count...")
     pert_counts = adata.obs[perturbation_key].value_counts()
 
-    if len(pert_counts) > 500:
-        # Get top 500 perturbations
-        top_500_perts = pert_counts.nlargest(500).index
-        print(f"[{dataset_name}] Keeping top 500 perturbations (out of {len(pert_counts)} total)")
-        print(f"[{dataset_name}] Top perturbation: {top_500_perts[0]} ({pert_counts[top_500_perts[0]]} cells)")
-        print(f"[{dataset_name}] 500th perturbation: {top_500_perts[-1]} ({pert_counts[top_500_perts[-1]]} cells)")
+    if len(pert_counts) > max_perturbations:
+        # Get top N perturbations
+        top_perts = pert_counts.nlargest(max_perturbations).index
+        print(f"[{dataset_name}] Keeping top {max_perturbations} perturbations (out of {len(pert_counts)} total)")
+        print(f"[{dataset_name}] Top perturbation: {top_perts[0]} ({pert_counts[top_perts[0]]} cells)")
+        print(f"[{dataset_name}] {max_perturbations}th perturbation: {top_perts[-1]} ({pert_counts[top_perts[-1]]} cells)")
 
-        # Filter to keep only top 500 perturbations
-        mask = adata.obs[perturbation_key].isin(top_500_perts)
+        # Filter to keep only top N perturbations
+        mask = adata.obs[perturbation_key].isin(top_perts)
         original_cells = adata.n_obs
         adata = adata[mask].copy()
         filtered_cells = adata.n_obs
@@ -381,12 +375,12 @@ def run_preprocess(cfg):
         # Use the new HVG-only preprocess function
         processed = preprocess_hvg_only(
             adata=adata,
-            perturbation_key=cfg["perturbation_key"],
-            covariate_keys=cfg.get("covariate_keys", []),
-            control_value=cfg.get("control_value", "control"),
-            combination_delimiter=cfg.get("combination_delimiter", "+"),
-            highly_variable=cfg.get("highly_variable", 2000),
-            min_cells_per_gene=cfg.get("min_cells_per_group", 10),
+            perturbation_key=perturbation_key,
+            covariate_keys=covariate_keys,
+            control_value=control_value,
+            combination_delimiter=combination_delimiter,
+            highly_variable=highly_variable,
+            min_cells_per_gene=min_cells_per_group,
         )
         
         # Ensure processed count matrix is sparse CSR before saving
@@ -413,10 +407,10 @@ def run_preprocess(cfg):
         print(f"[{dataset_name}] Dataset shape: {adata.shape}")
         raise
     
-    print(f"[{dataset_name}] Saving to: {output_path}")
+    print(f"[{dataset_name}] Saving to: {output_file}")
     save_start = time.time()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    processed.write_h5ad(output_path)
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    processed.write_h5ad(output_file)
     save_time = time.time() - save_start
     total_time = time.time() - start_time
     print(f"[{dataset_name}] Saved (took {save_time:.1f}s)")
@@ -424,67 +418,86 @@ def run_preprocess(cfg):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Run preprocess() on h5ad files in a directory (HVG only version)"
+        description="Run preprocess() on a single h5ad file (HVG only version)"
     )
     parser.add_argument(
-        "--input-dir",
+        "--input-file",
         type=Path,
-        default=DEFAULT_CELL_LINE_DIR,
-        help=f"Input directory containing h5ad files (default: {DEFAULT_CELL_LINE_DIR})",
+        required=True,
+        help="Input h5ad file path",
     )
     parser.add_argument(
-        "--output-dir",
+        "--output-file",
         type=Path,
-        default=None,
-        help=f"Output directory for processed files (default: input_dir/normalized)",
+        required=True,
+        help="Output h5ad file path",
     )
     parser.add_argument(
-        "--n-jobs",
+        "--perturbation-key",
+        type=str,
+        default=DEFAULT_CFG["perturbation_key"],
+        help=f"Column name for perturbations (default: {DEFAULT_CFG['perturbation_key']})",
+    )
+    parser.add_argument(
+        "--control-value",
+        type=str,
+        default=DEFAULT_CFG["control_value"],
+        help=f"Value indicating control cells (default: {DEFAULT_CFG['control_value']})",
+    )
+    parser.add_argument(
+        "--covariate-keys",
+        type=str,
+        nargs="+",
+        default=DEFAULT_CFG["covariate_keys"],
+        help=f"Covariate column names (default: {DEFAULT_CFG['covariate_keys']})",
+    )
+    parser.add_argument(
+        "--combination-delimiter",
+        type=str,
+        default=DEFAULT_CFG["combination_delimiter"],
+        help=f"Delimiter for perturbation combinations (default: {DEFAULT_CFG['combination_delimiter']})",
+    )
+    parser.add_argument(
+        "--highly-variable",
         type=int,
-        default=1,
-        help=f"Number of parallel jobs (default: 1, use -1 for all available CPUs)",
+        default=DEFAULT_CFG["highly_variable"],
+        help=f"Number of highly variable genes to select (default: {DEFAULT_CFG['highly_variable']})",
+    )
+    parser.add_argument(
+        "--min-cells-per-group",
+        type=int,
+        default=DEFAULT_CFG["min_cells_per_group"],
+        help=f"Minimum cells per perturbation group (default: {DEFAULT_CFG['min_cells_per_group']})",
+    )
+    parser.add_argument(
+        "--max-perturbations",
+        type=int,
+        default=500,
+        help="Maximum number of perturbations to keep, selected by cell count (default: 500)",
     )
     args = parser.parse_args()
     
-    # Set output directory
-    if args.output_dir is None:
-        output_dir = args.input_dir / "normalized"
-    else:
-        output_dir = args.output_dir
-    
-    # Build datasets list
-    datasets = build_datasets(args.input_dir, output_dir)
-    
-    if not datasets:
-        print(f"No h5ad files found in {args.input_dir}")
+    # Check input file exists
+    if not args.input_file.exists():
+        print(f"Error: Input file does not exist: {args.input_file}")
         return
     
-    # Determine number of jobs
-    if args.n_jobs == -1:
-        n_jobs = cpu_count()
-    else:
-        n_jobs = max(1, min(args.n_jobs, cpu_count(), len(datasets)))
-    
-    print(f"Input directory: {args.input_dir}")
-    print(f"Output directory: {output_dir}")
-    print(f"Found {len(datasets)} dataset(s) to process")
-    print(f"Using {n_jobs} parallel job(s)")
+    print(f"Input file: {args.input_file}")
+    print(f"Output file: {args.output_file}")
     print(f"NOTE: This script only selects Highly Variable Genes (HVG), not DEGs.\n")
     
-    # Process datasets
-    if n_jobs == 1:
-        # Serial processing
-        for cfg in datasets:
-            run_preprocess(cfg)
-    else:
-        # Parallel processing
-        total_start = time.time()
-        with Pool(processes=n_jobs) as pool:
-            results = pool.map(run_preprocess, datasets)
-        total_time = time.time() - total_start
-        print(f"\n{'='*70}")
-        print(f"All datasets processed in {total_time:.1f}s using {n_jobs} workers")
-        print(f"{'='*70}")
+    # Process single file
+    run_preprocess(
+        input_file=args.input_file,
+        output_file=args.output_file,
+        perturbation_key=args.perturbation_key,
+        control_value=args.control_value,
+        covariate_keys=args.covariate_keys,
+        combination_delimiter=args.combination_delimiter,
+        highly_variable=args.highly_variable,
+        min_cells_per_group=args.min_cells_per_group,
+        max_perturbations=args.max_perturbations,
+    )
 
 if __name__ == "__main__":
     main()

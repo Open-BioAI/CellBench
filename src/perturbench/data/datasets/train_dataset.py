@@ -10,6 +10,8 @@ import numpy as np
 import torch
 import pandas as pd
 from torch.utils.data import Dataset
+import random  # Python random 比 np.random 快
+from scipy.sparse import issparse
 
 
 class scTrainDataset(Dataset):
@@ -39,6 +41,8 @@ class scTrainDataset(Dataset):
             add_keys: List[str] | None = None,
             predict_controls: bool = False,
             expression_mask: np.ndarray | None = None,
+            cellclass_mask_dict: Dict[str, np.ndarray] | None = None,
+            mask_type: str|None=None,
             **kwargs
     ):
         super().__init__()
@@ -54,20 +58,30 @@ class scTrainDataset(Dataset):
         self.pert_obs=pert_adata.obs
         self.control_obs=control_adata.obs
 
-        # Generate expression masks for perturbation and control data
-        self.pert_expression_mask = (pert_adata.X > 0).astype(np.float32)#没啥用，删了吧，还不如一句mask=batch.pert_cell_counts!=0
-        self.control_expression_mask = (control_adata.X > 0).astype(np.float32)
-
         # -----------------------------------
         # 1. 提前提取所有数据（极大提速）
         # -----------------------------------
-        self.X_pert = pert_adata.X
-        self.X_ctrl = control_adata.X
+        # 如果是稀疏矩阵，转为密集数组（随机访问更快）
+        X_pert = pert_adata.X
+        X_ctrl = control_adata.X
+        self.X_pert = X_pert.toarray() if issparse(X_pert) else np.asarray(X_pert)
+        self.X_ctrl = X_ctrl.toarray() if issparse(X_ctrl) else np.asarray(X_ctrl)
+        
+        # 转为 float32 并确保连续内存布局（加速 tensor 转换）
+        if self.X_pert.dtype != np.float32:
+            self.X_pert = self.X_pert.astype(np.float32)
+        if self.X_ctrl.dtype != np.float32:
+            self.X_ctrl = self.X_ctrl.astype(np.float32)
+        self.X_pert = np.ascontiguousarray(self.X_pert)
+        self.X_ctrl = np.ascontiguousarray(self.X_ctrl)
 
         self.embedding_key = embedding_key
         if embedding_key:
-            self.emb_pert = pert_adata.obsm[embedding_key]
-            self.emb_ctrl = control_adata.obsm[embedding_key]
+            # 转为 float32 连续数组（加速 tensor 转换）
+            emb_pert = pert_adata.obsm[embedding_key]
+            emb_ctrl = control_adata.obsm[embedding_key]
+            self.emb_pert = np.ascontiguousarray(emb_pert, dtype=np.float32)
+            self.emb_ctrl = np.ascontiguousarray(emb_ctrl, dtype=np.float32)
         else:
             self.emb_pert = None
             self.emb_ctrl = None
@@ -92,6 +106,8 @@ class scTrainDataset(Dataset):
         self.cov_avg_sampling = cov_avg_sampling
         self.cell_set_len = cell_set_len
         self.add_keys = add_keys
+        self.mask_type = mask_type
+        self.mask_dict = cellclass_mask_dict
 
         pert_obs = pert_adata.obs
         ctrl_obs = control_adata.obs
@@ -140,38 +156,57 @@ class scTrainDataset(Dataset):
         # 3. 建立索引（代替 Pandas 过滤）
         # -----------------------------------
         #（重要）为每个 cov / (cov,pert) 分组提前建立索引列表
-        self.index_by_cov_pert = {}
-        self.index_by_cov_ctrl = {}
+        index_by_cov_pert_tmp = {}
+        index_by_cov_ctrl_tmp = {}
 
         for i, c in enumerate(pert_cov):
             if self.use_mix_pert:
                 key=(c,self.gene_pert_labels[i],self.drug_pert_labels[i],self.env_pert_labels[i],self.crispr_labels[i])
             else:
                 key = (c, self.pert_labels[i])
-            self.index_by_cov_pert.setdefault(key, []).append(i)
+            index_by_cov_pert_tmp.setdefault(key, []).append(i)
 
         for i, c in enumerate(ctrl_cov):
-            self.index_by_cov_ctrl.setdefault(c, []).append(i)
+            index_by_cov_ctrl_tmp.setdefault(c, []).append(i)
 
         # weak check
-        if any(len(v) == 0 for v in self.index_by_cov_ctrl.values()):
+        if any(len(v) == 0 for v in index_by_cov_ctrl_tmp.values()):
             print("⚠ warning: 某些 control cov 为空")
+
+        # 转换为 numpy 数组（加速 random.choice）
+        self.index_by_cov_pert = {k: np.array(v, dtype=np.int64) for k, v in index_by_cov_pert_tmp.items()}
+        self.index_by_cov_ctrl = {k: np.array(v, dtype=np.int64) for k, v in index_by_cov_ctrl_tmp.items()}
 
         # cov unique
         self.unique_covs = np.unique(pert_cov)
         self.unique_keys = list(self.index_by_cov_pert.keys())
+        self._n_unique_keys = len(self.unique_keys)  # 缓存长度
+        
+        # 预分割 cov 字符串（避免 build_output 中重复 split）
+        self._cov_split_cache = {}
+        for key in self.unique_keys:
+            cov = key[0]
+            if cov not in self._cov_split_cache:
+                self._cov_split_cache[cov] = cov.split('<>')
 
         # -----------------------------------
         # 4. transform 初始化
         # -----------------------------------
         self.transform = transform(
-            obs_df=pert_obs.copy(),
-            mode="train"
+            obs_df=pert_obs.copy()
         )
 
         # 记录总长度
         self.length = len(pert_obs) if predict_controls \
             else len(pert_obs)+ len(ctrl_obs)
+            
+        if self.mask_type=='cell':
+            self.pert_expression_mask = np.ascontiguousarray((self.X_pert > 0).astype(np.float32))
+        elif self.mask_type is not None and self.mask_dict is not None:
+            mask = [self.mask_dict[cellclass] for cellclass in self.pert_adata.obs['cellclass']]
+            self.pert_expression_mask = np.ascontiguousarray(np.stack(mask, axis=0), dtype=np.float32)
+        else:
+            self.pert_expression_mask = None
 
     def merge_cols(self, obs_df, cols):
         merged = obs_df[cols[0]].astype(str).to_numpy()
@@ -192,81 +227,188 @@ class scTrainDataset(Dataset):
             return self.get_single_sample()
 
     # ---------------------------------------------------------
-    # 采样一个单细胞
+    # 采样一个单细胞（优化版）
     # ---------------------------------------------------------
     def get_single_sample(self):
-        # 1. 随机选一个 (cov, pert) 或者 (cov,gene_pert,drug_pert,env_pert)
-        key = self.unique_keys[
-            np.random.randint(len(self.unique_keys))
-        ]
-
-        # 2. 从对应 bucket 取 idx
-        pert_idx = np.random.choice(self.index_by_cov_pert[key])
-        ctrl_idx = np.random.choice(self.index_by_cov_ctrl[key[0]])
+        # 使用 Python random（比 np.random 快 3-5 倍）
+        key = self.unique_keys[random.randint(0, self._n_unique_keys - 1)]
+        
+        # numpy 数组的随机选择
+        pert_arr = self.index_by_cov_pert[key]
+        ctrl_arr = self.index_by_cov_ctrl[key[0]]
+        pert_idx = pert_arr[random.randint(0, len(pert_arr) - 1)]
+        ctrl_idx = ctrl_arr[random.randint(0, len(ctrl_arr) - 1)]
 
         if self.use_mix_pert:
-            return self.build_output(pert_idx, ctrl_idx, key[0], (key[1],key[2],key[3],key[4]))
+            return self.build_output_fast(pert_idx, ctrl_idx, key)
         else:
             return self.build_output(pert_idx, ctrl_idx, key[0], key[1])
 
     # ---------------------------------------------------------
-    # 采样一个 set（多个细胞）
+    # 采样一个 set（多个细胞，优化版）
     # ---------------------------------------------------------
     def get_set_sample(self):
-        key = self.unique_keys[
-            np.random.randint(len(self.unique_keys))
-        ]
+        key = self.unique_keys[random.randint(0, self._n_unique_keys - 1)]
 
-        pert_list = self.index_by_cov_pert[key]
-        ctrl_list = self.index_by_cov_ctrl[key[0]]
+        pert_arr = self.index_by_cov_pert[key]
+        ctrl_arr = self.index_by_cov_ctrl[key[0]]
+        
+        n_pert = len(pert_arr)
+        n_ctrl = len(ctrl_arr)
+        cell_set_len = self.cell_set_len
 
-        replace_p = self.cell_set_len > len(pert_list)
-        replace_c = self.cell_set_len > len(ctrl_list)
-
-        pert_idxs = np.random.choice(pert_list, size=self.cell_set_len, replace=replace_p)
-        ctrl_idxs = np.random.choice(ctrl_list, size=self.cell_set_len, replace=replace_c)
+        # 优化：如果不需要 replace，用更快的方法
+        if cell_set_len <= n_pert:
+            pert_idxs = np.random.choice(pert_arr, size=cell_set_len, replace=False)
+        else:
+            pert_idxs = np.random.choice(pert_arr, size=cell_set_len, replace=True)
+            
+        if cell_set_len <= n_ctrl:
+            ctrl_idxs = np.random.choice(ctrl_arr, size=cell_set_len, replace=False)
+        else:
+            ctrl_idxs = np.random.choice(ctrl_arr, size=cell_set_len, replace=True)
 
         if self.use_mix_pert:
-            return self.build_output(pert_idxs, ctrl_idxs,key[0], (key[1],key[2],key[3],key[4]))
+            return self.build_output_fast(pert_idxs, ctrl_idxs, key)
         else:
             return self.build_output(pert_idxs, ctrl_idxs, key[0], key[1])
 
     # ---------------------------------------------------------
-    # 构建 transform 输入字典（纯 numpy → torch）
+    # 极速构建输出（跳过 transform，用于 mix_pert 模式）
+    # ---------------------------------------------------------
+    def build_output_fast(self, pert_idx, ctrl_idx, key):
+        """
+        极致优化版本：
+        - 使用预缓存的 cov 分割结果
+        - 使用 torch.from_numpy（零拷贝）
+        - 跳过 transform，直接构建输出
+        """
+        cov = key[0]
+        gene_pert, drug_pert, env_pert, crispr_type = key[1], key[2], key[3], key[4]
+        
+        # 使用预缓存的 transform
+        t = self.transform
+        
+        # 预缓存的 null embeddings
+        gene_null = t._gene_null_emb
+        drug_null = t._drug_null_emb
+        env_null = t._env_null_emb
+        crispr_null = t._crispr_null_emb
+        
+        out = {}
+        
+        # 使用预分割的 cov
+        covs = self._cov_split_cache[cov]
+        
+        # 协变量处理
+        if t.use_covs:
+            cov_maps = t.cov_maps
+            cov_null_embs = t._cov_null_embs
+            for idx, cov_key in enumerate(self.cov_keys):
+                out[cov_key] = cov_maps[cov_key].get(covs[idx], cov_null_embs[cov_key])
+        
+        # pert names
+        if t.keep_pert_names:
+            out['gene_names'] = gene_pert.split(t.comb_delim)
+            out['drug_names'] = drug_pert.split(t.comb_delim)
+            out['env_names'] = env_pert.split(t.comb_delim)
+        
+        # gene embedding（padded tensor 格式）
+        if t.gene_pert_dim > 1:
+            gene_map = t.gene_map
+            gene_perts = gene_pert.split(t.comb_delim)
+            max_gene = t.max_gene_perts
+            n_gene = min(len(gene_perts), max_gene)
+            gene_tensor = torch.zeros(max_gene, t.gene_pert_dim, dtype=torch.float32)
+            for i in range(n_gene):
+                gene_tensor[i] = gene_map.get(gene_perts[i], gene_null)
+            out['gene_pert'] = gene_tensor
+            out['gene_pert_len'] = n_gene
+        
+        # drug embedding（padded tensor 格式）
+        if t.drug_pert_dim > 1:
+            drug_map = t.drug_map
+            drug_perts = drug_pert.split(t.comb_delim)
+            max_drug = t.max_drug_perts
+            n_drug = min(len(drug_perts), max_drug)
+            drug_tensor = torch.zeros(max_drug, t.drug_pert_dim, dtype=torch.float32)
+            for i in range(n_drug):
+                drug_tensor[i] = drug_map.get(drug_perts[i], drug_null)
+            out['drug_pert'] = drug_tensor
+            out['drug_pert_len'] = n_drug
+        
+        # env embedding
+        if t.env_pert_dim > 1:
+            env_map = t.env_map
+            env_perts = env_pert.split(t.comb_delim)
+            if len(env_perts) == 1:
+                out['env_pert'] = env_map.get(env_perts[0], env_null)
+            else:
+                result = env_map.get(env_perts[0], env_null).clone()
+                for ep in env_perts[1:]:
+                    result += env_map.get(ep, env_null)
+                out['env_pert'] = result
+        
+        # crispr embedding
+        if t.crispr_pert_dim > 1:
+            out['crispr_pert'] = t.crispr_map.get(crispr_type, crispr_null)
+        
+        # counts（使用 torch.from_numpy 零拷贝，数据已经是 float32 连续数组）
+        out['pert_cell_counts'] = torch.from_numpy(self.X_pert[pert_idx])
+        out['control_cell_counts'] = torch.from_numpy(self.X_ctrl[ctrl_idx])
+        
+        # mask
+        if self.pert_expression_mask is not None:
+            out['mask'] = torch.from_numpy(self.pert_expression_mask[pert_idx])
+        
+        # cell embedding（数据已在 __init__ 中转为 float32 连续数组）
+        if t.use_cell_emb and self.emb_pert is not None:
+            out['pert_cell_emb'] = torch.from_numpy(self.emb_pert[pert_idx])
+            out['control_cell_emb'] = torch.from_numpy(self.emb_ctrl[ctrl_idx])
+        
+        # raw counts
+        if self.raw_pert is not None:
+            out['pert_raw_counts'] = torch.as_tensor(self.raw_pert[pert_idx], dtype=torch.float32)
+            out['control_raw_counts'] = torch.as_tensor(self.raw_ctrl[ctrl_idx], dtype=torch.float32)
+        
+        return out
+
+    # ---------------------------------------------------------
+    # 构建 transform 输入字典（原始版本，用于非 mix_pert 模式）
     # ---------------------------------------------------------
     def build_output(self, pert_idx, ctrl_idx, cov, pert):
         out = {}
 
-        covs=cov.split('<>')
-        for idx,cov_key in enumerate(self.cov_keys):
-            out[cov_key]=covs[idx]
+        covs = self._cov_split_cache.get(cov) or cov.split('<>')
+        for idx, cov_key in enumerate(self.cov_keys):
+            out[cov_key] = covs[idx]
 
         if self.use_mix_pert:
-            gene_pert,drug_pert,env_pert,crispr_type=pert
-            out[self.gene_key]=gene_pert
-            out[self.drug_key]=drug_pert
-            out[self.env_key]=env_pert
-            out[self.crispr_key]=crispr_type
+            gene_pert, drug_pert, env_pert, crispr_type = pert
+            out[self.gene_key] = gene_pert
+            out[self.drug_key] = drug_pert
+            out[self.env_key] = env_pert
+            out[self.crispr_key] = crispr_type
         else:
             out[self.pert_key] = pert
 
-        # counts
-        out["pert_cell_counts"] = torch.tensor(self.X_pert[pert_idx])
-        out["control_cell_counts"] = torch.tensor(self.X_ctrl[ctrl_idx])
-
-        # expression mask for loss calculation
-        out["pert_expression_mask"] = torch.tensor(self.pert_expression_mask[pert_idx])
-        out["control_expression_mask"] = torch.tensor(self.control_expression_mask[ctrl_idx])
-
-        # embedding
+        # counts（使用 torch.from_numpy）
+        out["pert_cell_counts"] = torch.from_numpy(self.X_pert[pert_idx])
+        out["control_cell_counts"] = torch.from_numpy(self.X_ctrl[ctrl_idx])
+        
+        # mask
+        if self.pert_expression_mask is not None:
+            out['mask'] = torch.from_numpy(self.pert_expression_mask[pert_idx])
+            
+        # embedding（数据已在 __init__ 中转为 float32 连续数组）
         if self.emb_pert is not None:
-            out["pert_cell_emb"] = torch.tensor(self.emb_pert[pert_idx])
-            out["control_cell_emb"] = torch.tensor(self.emb_ctrl[ctrl_idx])
+            out["pert_cell_emb"] = torch.from_numpy(self.emb_pert[pert_idx])
+            out["control_cell_emb"] = torch.from_numpy(self.emb_ctrl[ctrl_idx])
 
         # raw
         if self.raw_pert is not None:
-            out["pert_raw_counts"] = torch.tensor(self.raw_pert[pert_idx])
-            out["control_raw_counts"] = torch.tensor(self.raw_ctrl[ctrl_idx])
+            out["pert_raw_counts"] = torch.as_tensor(self.raw_pert[pert_idx], dtype=torch.float32)
+            out["control_raw_counts"] = torch.as_tensor(self.raw_ctrl[ctrl_idx], dtype=torch.float32)
 
         # transform（保持兼容）
         return self.transform(out)

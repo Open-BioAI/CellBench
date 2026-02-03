@@ -460,7 +460,6 @@ class PertDataModule(L.LightningDataModule):
             return X.toarray()
         else:
             return X
-
     def merge_cols(self, obs_df, cols):
         # 处理第一列，先转换为字符串类型避免 Categorical 问题
         first_col = obs_df[cols[0]]
@@ -478,5 +477,10 @@ class PertDataModule(L.LightningDataModule):
             col_values = col_data.fillna('').astype(str).to_numpy()
             merged = merged + "<>" + col_values
         return merged
-
+    def generate_mask_dict(self):
+        self.adata.obs['cellclass'] =self.merge_cols(self.adata.obs, self.result_avg_keys)
+        mask_dict = {}
+        for cellclass_key in self.adata.obs['cellclass'].unique():
+            mask_dict[cellclass_key] = self.adata.X[self.adata.obs['cellclass']==cellclass_key].sum(axis=0).toarray()!=0
+        self.mask_dict = mask_dict
 

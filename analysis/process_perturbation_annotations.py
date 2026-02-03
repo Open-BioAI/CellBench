@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Process perturbation annotations in scGPT embedding files.
+Process perturbation annotations
 
 For each cell:
 1. Split perturbation by "+" and get unique values
@@ -10,6 +10,7 @@ For each cell:
    - drug_pt: remaining perturbations (not in gene or env lists)
 3. Create obs.control: True if unique perturbations only contain "control", False otherwise
 4. Verify that control=True cells have empty gene_pt, drug_pt, env_pt
+5. Add CRISPR and cell_cluster columns if they don't exist
 """
 
 import argparse
@@ -44,10 +45,64 @@ def load_cytokine_set(cytokine_file: Path) -> Set[str]:
     return cytokines
 
 
+def normalize_pert_string(s) -> str:
+    """将一个扰动字符串标准化：按'+'拆分、strip、排序后再用'+'连接."""
+    # 先检查是否为 None 或 NaN（避免 astype(str) 把 NaN 变成 "nan" 字符串）
+    if s is None or pd.isna(s):
+        return ""
+
+    # 转换为字符串并检查是否为 "nan"/"None" 字符串
+    s_str = str(s).strip()
+    if s_str.lower() in {"nan", "none"}:
+        return ""
+
+    parts = [p.strip() for p in s_str.split("+") if p.strip() != ""]
+    if not parts:
+        return ""
+    parts_sorted = sorted(parts)
+    return "+".join(parts_sorted)
+
+
+def build_pert_key(
+    obs: pd.DataFrame, gene_pt_col: str, drug_pt_col: str, env_pt_col: str
+) -> pd.Series:
+    """Build perturbation key from gene_pt, drug_pt, env_pt columns."""
+    # 去掉 astype(str)，让 normalize_pert_string 直接处理原始值（包括 NaN）
+    g_norm = obs[gene_pt_col].apply(normalize_pert_string)
+    d_norm = obs[drug_pt_col].apply(normalize_pert_string)
+    e_norm = obs[env_pt_col].apply(normalize_pert_string)
+    # 全部转换为字符串类型，避免 Categorical 类型导致的错误
+    g_norm = g_norm.astype(str)
+    d_norm = d_norm.astype(str)
+    e_norm = e_norm.astype(str)
+    return g_norm + "|" + d_norm + "|" + e_norm
+
+
+def add_crispr_column(obs: pd.DataFrame, crispr_value: str = "") -> None:
+    """Add CRISPR column to obs DataFrame."""
+    obs['CRISPR'] = crispr_value
+    print(f"Added CRISPR column with value: '{crispr_value}'")
+
+
+def add_cell_cluster_column(obs: pd.DataFrame) -> None:
+    """Add cell_cluster column to obs DataFrame.
+
+    Priority: cell_line > celltype
+    """
+    if 'cell_line' in obs.columns:
+        obs['cell_cluster'] = obs['cell_line']
+        print("Using 'cell_line' column as 'cell_cluster'")
+    elif 'celltype' in obs.columns:
+        obs['cell_cluster'] = obs['celltype']
+        print("Using 'celltype' column as 'cell_cluster'")
+    else:
+        raise ValueError("Neither 'cell_line' nor 'celltype' column found in adata.obs")
+
+
 def normalize_drug_name(drug: str) -> str:
     """
     Normalize drug name: convert to lowercase and remove leading "-" if present.
-    
+
     Examples:
         "-JQ1" -> "jq1"
         "IFNB" -> "ifnb"
@@ -112,12 +167,27 @@ def process_perturbation(
     return gene_pt, drug_pt, env_pt, is_control
 
 
+def add_crispr_and_cell_cluster_columns(
+    adata,
+    crispr_value: str = "",
+) -> None:
+    """Add CRISPR and cell_cluster columns to adata.obs."""
+    obs = adata.obs
+
+    # Add CRISPR column
+    add_crispr_column(obs, crispr_value)
+
+    # Add cell_cluster column
+    add_cell_cluster_column(obs)
+
+
 def process_single_file(
     input_file: Path,
     output_file: Path,
     gene_set: Set[str],
     cytokine_set: Set[str],
     perturbation_key: str = "perturbation",
+    crispr_value: str = "",
 ) -> bool:
     """Process a single h5ad file."""
     try:
@@ -143,6 +213,16 @@ def process_single_file(
                 return False
             perturbation_key = found_key
         
+        # Remove cells with NaN perturbation values
+        initial_n_obs = adata.n_obs
+        nan_mask = pd.isna(adata.obs[perturbation_key]) | (adata.obs[perturbation_key] == "")| (adata.obs[perturbation_key] == "nan")
+        n_nan = nan_mask.sum()
+        if n_nan > 0:
+            adata = adata[~nan_mask].copy()
+            print(f"  Removed {n_nan:,} cells with NaN/empty perturbation (remaining: {adata.n_obs:,} cells)")
+        else:
+            print(f"  No cells with NaN/empty perturbation found")
+        
         # Process each cell
         print(f"  Processing {adata.n_obs:,} cells...")
         results = []
@@ -163,6 +243,14 @@ def process_single_file(
         adata.obs['drug_pt'] = results_df['drug_pt']
         adata.obs['env_pt'] = results_df['env_pt']
         adata.obs['control'] = results_df['control']
+
+        # Add CRISPR and cell_cluster columns if they don't exist
+        if 'CRISPR' not in adata.obs.columns:
+            # 如果有 gene_pt 值，则设置为 crispr_value，否则为空字符串
+            adata.obs['CRISPR'] = adata.obs['gene_pt'].apply(lambda x: crispr_value if x != "" else "")
+            print(f"Auto-set CRISPR column based on gene_pt values (value: '{crispr_value}' for cells with gene_pt)")
+        if 'cell_cluster' not in adata.obs.columns:
+            add_cell_cluster_column(adata.obs)
         
         # Verify control cells
         control_mask = adata.obs['control'] == True
@@ -216,16 +304,16 @@ def main():
         description="Process perturbation annotations in scGPT embedding files"
     )
     parser.add_argument(
-        "--input-dir",
+        "--input-file",
         type=Path,
-        default=Path("/fs-computility-new/upzd_share/maoxinjie/AIVC/data/cell_line/all/scgpt"),
-        help="Input directory containing h5ad files",
+        required=True,
+        help="Input h5ad file to process",
     )
     parser.add_argument(
-        "--output-dir",
+        "--output-file",
         type=Path,
-        default=Path("/fs-computility-new/upzd_share/maoxinjie/AIVC/data/after_preprocess"),
-        help="Output directory for processed files",
+        required=True,
+        help="Output h5ad file path",
     )
     parser.add_argument(
         "--gene-list",
@@ -240,18 +328,19 @@ def main():
         help="Path to cytokine list file",
     )
     parser.add_argument(
+        "--crispr-value",
+        type=str,
+        default="",
+        help="Value to set for CRISPR column (default: empty string)",
+    )
+    parser.add_argument(
         "--perturbation-key",
         type=str,
         default="perturbation",
         help="Name of the perturbation column in obs (default: 'perturbation')",
     )
-    parser.add_argument(
-        "--overwrite",
-        action="store_true",
-        help="Overwrite existing gene_pt, drug_pt, env_pt, control columns if they exist",
-    )
     args = parser.parse_args()
-    
+
     # Load gene and cytokine sets
     print("Loading gene set...")
     gene_set = load_gene_set(args.gene_list)
@@ -261,31 +350,30 @@ def main():
     cytokine_set = load_cytokine_set(args.cytokine_list)
     print(f"  Loaded {len(cytokine_set):,} cytokines")
     
-    # Find all h5ad files
-    h5ad_files = sorted([f for f in args.input_dir.glob("*.h5ad") if not f.name.startswith(".")])
-    print(f"\nFound {len(h5ad_files)} h5ad files to process")
-    
-    if len(h5ad_files) == 0:
-        print("No h5ad files found!")
+    # Check input file exists
+    if not args.input_file.exists():
+        print(f"Error: Input file does not exist: {args.input_file}")
         sys.exit(1)
     
-    # Process each file
-    success_count = 0
-    for h5ad_file in tqdm(h5ad_files, desc="Processing files"):
-        output_file = args.output_dir / h5ad_file.name
-        
-        # Skip if output exists and not overwriting
-        if output_file.exists() and not args.overwrite:
-            print(f"\nSkipping {h5ad_file.name} (output already exists, use --overwrite to force)")
-            continue
-        
-        if process_single_file(h5ad_file, output_file, gene_set, cytokine_set, args.perturbation_key):
-            success_count += 1
+    # Process single file
+    print(f"\nProcessing single file: {args.input_file.name}")
+    success = process_single_file(
+        args.input_file,
+        args.output_file,
+        gene_set,
+        cytokine_set,
+        args.perturbation_key,
+        args.crispr_value
+    )
     
     print(f"\n{'='*80}")
-    print(f"Processing complete!")
-    print(f"  Successfully processed: {success_count}/{len(h5ad_files)} files")
-    print(f"  Output directory: {args.output_dir}")
+    if success:
+        print("Processing complete!")
+        print(f"  Successfully processed: {args.input_file}")
+        print(f"  Output saved to: {args.output_file}")
+    else:
+        print("Processing failed!")
+        sys.exit(1)
     print(f"{'='*80}")
 
 

@@ -12,7 +12,7 @@ penalty_weight: 1.0
 
 ## Model params
 n_layers: 3
-encoder_width: 3072
+encoder_width: 512  # 从 3072 降到 512，参数量降低约 36 倍
 latent_dim: 32
 softplus_output: True
 dropout: 0.1

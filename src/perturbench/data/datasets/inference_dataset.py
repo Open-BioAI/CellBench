@@ -14,6 +14,9 @@ import hydra
 import scanpy as sc
 import pandas as pd
 import torch
+import random  # Python random 比 np.random 快
+from scipy.sparse import issparse
+
 
 class scInferenceDataset(Dataset):
 
@@ -34,21 +37,24 @@ class scInferenceDataset(Dataset):
         cell_set_len: int | None = None,
         add_keys: List[str] | None = None,
         expression_mask: np.ndarray | None = None,
+        cellclass_mask_dict: Dict[str, np.ndarray] | None = None,
+        mask_type: str | None = None,
         **kwargs
     ):
         super().__init__()
 
         self.merge_delim = '<>'
         self.pert_key = pert_key
-        self.gene_key=gene_key
-        self.drug_key=drug_key
-        self.env_key=env_key
-        self.crispr_key=crispr_key
+        self.gene_key = gene_key
+        self.drug_key = drug_key
+        self.env_key = env_key
+        self.crispr_key = crispr_key
         self.cov_keys = cov_keys
         self.add_keys = add_keys
         self.embedding_key = embedding_key
         self.raw_counts_key = raw_counts_key
         self.cell_set_len = cell_set_len
+        self.mask_type = mask_type
 
         self.use_mix_pert = use_mix_pert
 
@@ -59,44 +65,65 @@ class scInferenceDataset(Dataset):
         pert_obs["cov_merged"] = self.merge_cols(pert_obs, cov_keys, self.merge_delim)
         ctrl_obs["cov_merged"] = self.merge_cols(ctrl_obs, cov_keys, self.merge_delim)
 
-        self.pert_adata=pert_adata
-        self.control_adata=control_adata
+        self.pert_adata = pert_adata
+        self.control_adata = control_adata
 
         self.pert_obs = pert_obs
         self.control_obs = ctrl_obs
 
         # ====== 2) 预构建控制组索引映射 ======
-        self.ctrl_group_map = {
-            cov: ctrl_obs.index[ctrl_obs["cov_merged"] == cov].to_numpy()
-            for cov in ctrl_obs["cov_merged"].unique()
-        }
+        # 使用整数索引而非字符串索引（更快）
+        ctrl_cov_arr = ctrl_obs["cov_merged"].to_numpy()
+        self.ctrl_group_map = {}
+        for i, cov in enumerate(ctrl_cov_arr):
+            self.ctrl_group_map.setdefault(cov, []).append(i)
+        # 转为 numpy 数组（加速 random.choice）
+        self.ctrl_group_map = {k: np.array(v, dtype=np.int64) for k, v in self.ctrl_group_map.items()}
+        # 保存所有 control 索引作为 fallback
+        self.all_ctrl_idxs = np.arange(len(ctrl_obs), dtype=np.int64)
 
-        # ====== 3) 把矩阵一次性取出为 numpy，避免 AnnData 切片 ======
-        self.pert_X = np.asarray(pert_adata.X)
-        self.ctrl_X = np.asarray(control_adata.X)
+        # ====== 3) 把矩阵一次性取出为 numpy，确保密集 + float32 + 连续 ======
+        X_pert = pert_adata.X
+        X_ctrl = control_adata.X
+        self.pert_X = X_pert.toarray() if issparse(X_pert) else np.asarray(X_pert)
+        self.ctrl_X = X_ctrl.toarray() if issparse(X_ctrl) else np.asarray(X_ctrl)
+        
+        # 转为 float32 连续数组（加速 tensor 转换）
+        if self.pert_X.dtype != np.float32:
+            self.pert_X = self.pert_X.astype(np.float32)
+        if self.ctrl_X.dtype != np.float32:
+            self.ctrl_X = self.ctrl_X.astype(np.float32)
+        self.pert_X = np.ascontiguousarray(self.pert_X)
+        self.ctrl_X = np.ascontiguousarray(self.ctrl_X)
 
-        # Generate expression masks for perturbation and control data
-        self.pert_expression_mask = (self.pert_X > 0).astype(np.float32)
-        self.ctrl_expression_mask = (self.ctrl_X > 0).astype(np.float32)
+        # mask 处理
+        if self.mask_type == 'cell':
+            self.pert_expression_mask = np.ascontiguousarray((self.pert_X > 0).astype(np.float32))
+        elif self.mask_type is not None and cellclass_mask_dict is not None:
+            mask = [cellclass_mask_dict[cellclass] for cellclass in self.pert_adata.obs['cellclass']]
+            self.pert_expression_mask = np.ascontiguousarray(np.stack(mask, axis=0), dtype=np.float32)
+        else:
+            self.pert_expression_mask = None
 
+        # embedding 转为 float32 连续数组
         if embedding_key:
-            self.pert_emb = pert_adata.obsm[embedding_key]
-            self.ctrl_emb = control_adata.obsm[embedding_key]
+            self.pert_emb = np.ascontiguousarray(pert_adata.obsm[embedding_key], dtype=np.float32)
+            self.ctrl_emb = np.ascontiguousarray(control_adata.obsm[embedding_key], dtype=np.float32)
         else:
             self.pert_emb = self.ctrl_emb = None
 
         if raw_counts_key:
-            self.pert_raw = pert_obs[raw_counts_key].to_numpy()
-            self.ctrl_raw = ctrl_obs[raw_counts_key].to_numpy()
+            self.pert_raw = np.ascontiguousarray(pert_obs[raw_counts_key].to_numpy(), dtype=np.float32)
+            self.ctrl_raw = np.ascontiguousarray(ctrl_obs[raw_counts_key].to_numpy(), dtype=np.float32)
         else:
             self.pert_raw = self.ctrl_raw = None
 
-        # 预记录 index mapping，避免反复查名字
+        # 整数索引映射（不需要字符串映射了）
         self.pert_index_map = {name: i for i, name in enumerate(pert_obs.index)}
         self.ctrl_index_map = {name: i for i, name in enumerate(ctrl_obs.index)}
 
         # ====== 初始化 transform ======
-        self.transform = transform(obs_df=pert_obs.copy(), mode="eval")
+        self.transform = transform(obs_df=pert_obs.copy())
 
         # ====== 构建 chunks ======
         if cell_set_len:
@@ -105,23 +132,24 @@ class scInferenceDataset(Dataset):
             self.chunks = self.build_singles()
 
     # ----------------------------------------------------------------------
-    # 快速打包表达信息
+    # 快速打包表达信息（零拷贝版）
     # ----------------------------------------------------------------------
     def pack_expr(self, pert_i, ctrl_i):
+        """使用 torch.from_numpy 实现零拷贝，数据已在 __init__ 中转为 float32 连续数组"""
         out = {
             "pert_cell_counts": torch.from_numpy(self.pert_X[pert_i]),
             "control_cell_counts": torch.from_numpy(self.ctrl_X[ctrl_i]),
         }
 
         # expression mask for loss calculation
-        out["pert_expression_mask"] = torch.from_numpy(self.pert_expression_mask[pert_i])
-        out["control_expression_mask"] = torch.from_numpy(self.ctrl_expression_mask[ctrl_i])
+        if self.pert_expression_mask is not None:
+            out["mask"] = torch.from_numpy(self.pert_expression_mask[pert_i])
 
-        if self.embedding_key:
+        if self.pert_emb is not None:
             out["pert_cell_emb"] = torch.from_numpy(self.pert_emb[pert_i])
             out["control_cell_emb"] = torch.from_numpy(self.ctrl_emb[ctrl_i])
 
-        if self.raw_counts_key:
+        if self.pert_raw is not None:
             out["pert_raw_counts"] = torch.from_numpy(self.pert_raw[pert_i])
             out["control_raw_counts"] = torch.from_numpy(self.ctrl_raw[ctrl_i])
 
@@ -129,16 +157,21 @@ class scInferenceDataset(Dataset):
 
     # ----------------------------------------------------------------------
     def build_singles(self):
+        """优化版：预提取所有列到 numpy，避免循环内 pandas 操作"""
         chunks = []
         n = len(self.pert_obs)
 
-        # 一次性拿 meta 信息
+        # 一次性拿所有 meta 信息为 numpy 数组
         pert_cov = self.pert_obs["cov_merged"].to_numpy()
+        
+        # 预提取 cov 列
+        cov_arrays = {c: self.pert_obs[c].to_numpy() for c in self.cov_keys}
+        
         if self.use_mix_pert:
-            gene_pert=self.pert_obs[self.gene_key].to_numpy()
-            drug_pert=self.pert_obs[self.drug_key].to_numpy()
-            env_pert=self.pert_obs[self.env_key].to_numpy()
-            crispr_type=self.pert_obs[self.crispr_key].to_numpy()
+            gene_pert = self.pert_obs[self.gene_key].to_numpy()
+            drug_pert = self.pert_obs[self.drug_key].to_numpy()
+            env_pert = self.pert_obs[self.env_key].to_numpy()
+            crispr_type = self.pert_obs[self.crispr_key].to_numpy()
         else:
             pert_pert = self.pert_obs[self.pert_key].to_numpy()
 
@@ -146,55 +179,72 @@ class scInferenceDataset(Dataset):
             k: self.pert_obs[k].to_numpy() for k in (self.add_keys or [])
         }
 
+        # 预缓存 transform
+        transform = self.transform
+        pert_obs = self.pert_obs
+
         for i in range(n):
             cov = pert_cov[i]
-            ctrl_idxs = self.ctrl_group_map[cov]
-            ctrl_name = np.random.choice(ctrl_idxs)
-            ctrl_i = self.ctrl_index_map[ctrl_name]
+            ctrl_arr = self.ctrl_group_map.get(cov, self.all_ctrl_idxs)
+            # 使用 Python random（更快）
+            ctrl_i = ctrl_arr[random.randint(0, len(ctrl_arr) - 1)]
 
-            meta = {c: self.pert_obs[c].iloc[i] for c in self.cov_keys}
+            # 使用预提取的 numpy 数组（避免 pandas iloc）
+            meta = {c: cov_arrays[c][i] for c in self.cov_keys}
             if self.use_mix_pert:
-                meta[self.gene_key]=gene_pert[i]
-                meta[self.drug_key]=drug_pert[i]
-                meta[self.env_key]=env_pert[i]
-                meta[self.crispr_key]=crispr_type[i]
+                meta[self.gene_key] = gene_pert[i]
+                meta[self.drug_key] = drug_pert[i]
+                meta[self.env_key] = env_pert[i]
+                meta[self.crispr_key] = crispr_type[i]
             else:
                 meta[self.pert_key] = pert_pert[i]
             for k in add_keys_arrays:
                 meta[k] = add_keys_arrays[k][i]
 
             expr = self.pack_expr(i, ctrl_i)
-            chunks.append((self.transform({**meta, **expr}), self.pert_obs.iloc[[i]]))
+            chunks.append((transform({**meta, **expr}), pert_obs.iloc[[i]]))
 
         return chunks
 
     # ----------------------------------------------------------------------
     def build_sets(self):
+        """优化版：减少循环内计算"""
         chunks = []
+        merge_delim = self.merge_delim
+        
         if self.use_mix_pert:
             obs_merged = self.merge_cols(
-                self.pert_obs, self.cov_keys + [self.gene_key,self.drug_key,self.env_key,self.crispr_key], self.merge_delim
+                self.pert_obs, self.cov_keys + [self.gene_key, self.drug_key, self.env_key, self.crispr_key], merge_delim
             ).to_numpy()
-
         else:
             obs_merged = self.merge_cols(
-                self.pert_obs, self.cov_keys + [self.pert_key], self.merge_delim
+                self.pert_obs, self.cov_keys + [self.pert_key], merge_delim
             ).to_numpy()
 
         unique_groups = np.unique(obs_merged)
+        n_cov_keys = len(self.cov_keys)
+        
+        # 预提取 add_keys 数组
+        add_keys_arrays = {k: self.pert_obs[k].to_numpy() for k in (self.add_keys or [])}
+        
+        # 预缓存
+        transform = self.transform
+        pert_obs = self.pert_obs
+        cell_set_len = self.cell_set_len
 
         for g in unique_groups:
             idxs = np.where(obs_merged == g)[0]
-            cov_vals = g.split(self.merge_delim)
+            cov_vals = g.split(merge_delim)
+            
             if self.use_mix_pert:
-                pert_val=cov_vals[len(self.cov_keys):]
-                cov_vals = cov_vals[:len(self.cov_keys)]
-                gene_pert,drug_pert,env_pert,crispr_type=pert_val
-                sample_meta={
-                    self.gene_key:gene_pert,
-                    self.drug_key:drug_pert,
-                    self.env_key:env_pert,
-                    self.crispr_key:crispr_type,
+                pert_val = cov_vals[n_cov_keys:]
+                cov_vals = cov_vals[:n_cov_keys]
+                gene_pert, drug_pert, env_pert, crispr_type = pert_val
+                sample_meta = {
+                    self.gene_key: gene_pert,
+                    self.drug_key: drug_pert,
+                    self.env_key: env_pert,
+                    self.crispr_key: crispr_type,
                 }
             else:
                 pert_val = cov_vals[-1]
@@ -204,32 +254,25 @@ class scInferenceDataset(Dataset):
             for ci, c in enumerate(self.cov_keys):
                 sample_meta[c] = cov_vals[ci]
 
-            ctrl_cov = self.merge_delim.join(cov_vals)
-            # Fallback: 如果找不到匹配的 control 组，使用所有 control 细胞
-            if ctrl_cov in self.ctrl_group_map:
-                ctrl_idxs = self.ctrl_group_map[ctrl_cov]
-            else:
-                # 使用所有 control 细胞作为 fallback
-                ctrl_idxs = self.all_ctrl_idxs
+            ctrl_cov = merge_delim.join(cov_vals)
+            ctrl_idxs = self.ctrl_group_map.get(ctrl_cov, self.all_ctrl_idxs)
+            n_ctrl = len(ctrl_idxs)
 
-            for start in range(0, len(idxs), self.cell_set_len):
-                sub = idxs[start:start+self.cell_set_len]
+            for start in range(0, len(idxs), cell_set_len):
+                sub = idxs[start:start + cell_set_len]
                 sub_n = len(sub)
 
-                ctrl_sample = np.random.choice(
-                    ctrl_idxs, size=sub_n, replace=(len(ctrl_idxs)<sub_n)
-                )
+                # 直接使用整数索引（ctrl_idxs 已经是整数数组）
+                ctrl_sample = np.random.choice(ctrl_idxs, size=sub_n, replace=(n_ctrl < sub_n))
 
-                # pack batch
-                out=self.pack_expr(sub, [self.ctrl_index_map[c] for c in ctrl_sample])
+                # pack batch（ctrl_sample 已经是整数索引）
+                out = self.pack_expr(sub, ctrl_sample)
 
-                # add_keys
-                if self.add_keys:
-                    for k in self.add_keys:
-                        out[k] = self.pert_obs[k].iloc[sub].to_numpy()
+                # add_keys（使用预提取的数组）
+                for k in add_keys_arrays:
+                    out[k] = add_keys_arrays[k][sub]
 
-                chunks.append((self.transform({**sample_meta, **out}),
-                               self.pert_obs.iloc[sub]))
+                chunks.append((transform({**sample_meta, **out}), pert_obs.iloc[sub]))
 
         return chunks
 

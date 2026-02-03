@@ -54,7 +54,8 @@ class SparseAdditiveVAE(PerturbationModel):
             hidden_dim_cond: int = 128,
             latent_dim: int = 40,
             dropout: float = 0.2,
-        use_covs: bool = False,  # Unified covariate usage parameter
+            use_covs: bool = False,  # Unified covariate usage parameter
+            use_cell_emb: bool = False,
             mask_prior_probability: float = 0.01,
             lr: int | None = None,
             wd: int | None = None,
@@ -129,6 +130,7 @@ class SparseAdditiveVAE(PerturbationModel):
             use_covs = True
 
         self.use_covs = use_covs
+        self.use_cell_emb=use_cell_emb
         self.latent_dim = latent_dim
         self.latent_dim_pert = latent_dim * self.n_perts
         self.mask_prior_probability = mask_prior_probability
@@ -140,11 +142,9 @@ class SparseAdditiveVAE(PerturbationModel):
         if self.use_covs:
             self.n_total_covariates = datamodule.train_dataset.transform.n_total_covs
 
-        encoder_input_dim = (
-            self.n_genes + self.n_total_covariates
-            if self.use_covs
-            else self.n_genes
-        )
+        encoder_input_dim = self.embedding_dim  if self.use_cell_emb else self.n_genes
+        encoder_input_dim += self.n_total_covariates if self.use_covs else 0
+     
         decoder_input_dim = (
             latent_dim + self.n_total_covariates
             if self.use_covs
@@ -184,6 +184,7 @@ class SparseAdditiveVAE(PerturbationModel):
             gene_pert_dim=self.gene_pert_dim,
             drug_pert_dim=self.drug_pert_dim,
             env_pert_dim=self.env_pert_dim,
+            crispr_pert_dim=self.crispr_pert_dim,
             hidden_dims=[latent_dim] * (n_layers_encoder_e - 1) if n_layers_encoder_e > 1 else [],
             final_embed_dim=latent_dim,
         )
@@ -411,10 +412,6 @@ class SparseAdditiveVAE(PerturbationModel):
             batch_size=len(batch),
         )
 
-        # Compute training PCC (use mask if enabled)
-        train_pcc = self._compute_masked_pcc(predictions, observed_perturbed_expression, mask)
-        self.log("train_PCC", train_pcc, prog_bar=True, logger=True, batch_size=len(batch), on_step=True, on_epoch=True)
-
         return loss
 
     def validation_step(self, data_tuple, batch_idx: int) -> torch.Tensor:
@@ -445,10 +442,6 @@ class SparseAdditiveVAE(PerturbationModel):
             batch_size=len(batch),
         )
         self.log("val_loss", val_loss, prog_bar=True, logger=True, batch_size=len(batch), on_step=True, on_epoch=True)
-
-        # Compute validation PCC (use mask if enabled)
-        val_pcc = self._compute_masked_pcc(predictions, observed_perturbed_expression, mask)
-        self.log("val_PCC", val_pcc, prog_bar=True, logger=True, batch_size=len(batch), on_step=True, on_epoch=True)
 
         return val_loss
 

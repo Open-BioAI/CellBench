@@ -198,6 +198,7 @@ class PRNet(PerturbationModel):
             gene_pert_dim=self.gene_pert_dim,
             drug_pert_dim=self.drug_pert_dim,
             env_pert_dim=self.env_pert_dim,
+            crispr_pert_dim=self.crispr_pert_dim,
             hidden_dims=[comb_dimension] * (encoder_n_layers - 1) if encoder_n_layers > 1 else [],
             per_modality_embed_dim=comb_dimension,
             final_embed_dim=comb_dimension,
@@ -205,7 +206,8 @@ class PRNet(PerturbationModel):
         )
 
         # Encoder: [x_ctrl, c_emb, covariates?] -> z
-        encoder_input_dim = self.n_genes + comb_dimension
+        encoder_input_dim = self.n_genes + comb_dimension \
+            if not self.use_cell_emb else self.embedding_dim+comb_dimension
         if self.use_covs:
             encoder_input_dim += self.n_total_covariates
         self.encoder = _PEncoder(
@@ -231,7 +233,7 @@ class PRNet(PerturbationModel):
 
     def forward(self, batch) -> Dict[str, torch.Tensor]:
         # Get control expression (use pert_cell_counts as fallback if control_cell_counts is None)
-        x_ctrl = batch.control_cell_counts
+        x_ctrl = batch.control_cell_counts if not self.use_cell_emb else batch.control_cell_emb
 
         covariates = {}
         if self.use_covs:
@@ -350,10 +352,6 @@ class PRNet(PerturbationModel):
             prog_bar=True, logger=True, on_step=True, on_epoch=True, batch_size=len(batch), sync_dist=True,
         )
 
-        # Compute training PCC (use mask if enabled)
-        train_pcc = self._compute_masked_pcc(out["pred"], x_obs, mask)
-        self.log("train_PCC", train_pcc, prog_bar=True, logger=True, batch_size=len(batch), on_step=True, on_epoch=True, sync_dist=True)
-
         return total
 
     def validation_step(self,data_tuple, batch_idx: int):
@@ -383,10 +381,6 @@ class PRNet(PerturbationModel):
             {"val_loss": total, "val_rec": rec},
             prog_bar=True, logger=True, on_step=True, on_epoch=True, batch_size=len(batch), sync_dist=True,
         )
-
-        # Compute validation PCC (use mask if enabled)
-        val_pcc = self._compute_masked_pcc(out["pred"], x_obs, mask)
-        self.log("val_PCC", val_pcc, prog_bar=True, logger=True, batch_size=len(batch), on_step=True, on_epoch=True, sync_dist=True)
 
         return total
 

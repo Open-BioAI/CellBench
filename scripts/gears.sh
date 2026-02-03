@@ -1,8 +1,26 @@
-train \
-data=gears \
-model=gears  \
-trainer=gears \
-trainer.devices=[0,1,2,3]
+export PYTHONPATH=$PYTHONPATH:/fs-computility-new/upzd_share/maoxinjie/AIVC/mxj/perturbench-main/src
+export TMPDIR=/tmp  # 避免 AF_UNIX path too long
 
-
-
+HYDRA_FULL_ERROR=1 train \
+    data=gears \
+    data.data_path=/fs-computility-new/upzd_share/maoxinjie/AIVC/mxj/perturbench-main/data/Norman2019_singleperts_unseenperts.h5ad \
+    data.train_batch_size=32 \
+    data.val_batch_size=32 \
+    data.test_batch_size=32 \
+    data.pert_key=perturbation \
+    data.cov_keys=[cell_cluster] \
+    model=gears \
+    model.lr=1e-4 \
+    model.lr_scheduler_mode=onecycle \
+    model.lr_scheduler_patience=10 \
+    model.lr_scheduler_factor=0.5 \
+    model.use_mask=false \
+    model.use_cell_emb=false \
+    train=true \
+    test=true \
+    trainer=gears \
+    trainer.max_epochs=10 \
+    trainer.min_epochs=1 \
+    trainer.devices=[1] \
+    logger=wandb \
+    logger.wandb.project=perturbench

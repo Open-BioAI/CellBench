@@ -241,7 +241,6 @@ class GraphBuilder:
         """
         Creates Gene Ontology graph from a custom set of genes
         """
-
         fname = os.path.join(self.data_dir, "go.csv")
         if os.path.exists(fname):
             return pd.read_csv(fname)

@@ -19,6 +19,7 @@ train_num_workers: 16
 val_num_workers: 16
 test_num_workers: 16
 task: null                                              #允许通过 CLI / sweep 覆盖 data.task
+n_top_hvgs: null                                        #若不为null，训练时只使用前n_top_hvgs个基因
 
 splitter:
   max_heldout_fraction_per_covariate: 0.7               #重写覆盖splitter的参数

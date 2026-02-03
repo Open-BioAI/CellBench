@@ -56,7 +56,6 @@ class CPA(PerturbationModel):
             penalty_weight: float = 10.0,
             adv_steps: int = 7,
             n_warmup_epochs: int = 5,
-            use_adversary: bool = True,
             use_covs: bool = True,  # Unified covariate usage parameter
             softplus_output: bool = False,
             elementwise_affine: bool = False,
@@ -139,7 +138,6 @@ class CPA(PerturbationModel):
         self.multi_label_perts = bool(getattr(self, "use_mix_pert", False))
         self.adv_loss_drugs = nn.BCEWithLogitsLoss() if self.multi_label_perts else nn.CrossEntropyLoss()
         self.adv_loss_fn = nn.CrossEntropyLoss()
-        self.use_adversary = use_adversary
         # Only enable covariates if the transform actually provides maps
         transform_has_covs = hasattr(datamodule.train_dataset.transform, "cov_maps")
         # Auto-configure covariate usage based on data transform's use_covs setting or parameter
@@ -181,6 +179,7 @@ class CPA(PerturbationModel):
                 gene_pert_dim=self.gene_pert_dim,
                 drug_pert_dim=self.drug_pert_dim,
                 env_pert_dim=self.env_pert_dim,
+                crispr_pert_dim=self.crispr_pert_dim,
                 hidden_dims=hidden_dims,
                 final_embed_dim=self.n_latent,
                 dropout=self.dropout,
@@ -363,14 +362,7 @@ class CPA(PerturbationModel):
         return torch.stack(aggregated, dim=0)
 
     def _get_perturbations(self, batch):
-        if getattr(self, "use_mix_pert", False):
-            gene = batch.gene_pert
-            env = batch.env_pert
-            drug = self._aggregate_drug_pert(batch.drug_pert, gene.device, gene.dtype)
-            targets = torch.cat([gene, drug, env], dim=1)
-            return (targets > 0).float()
-
-        return batch[self.pert_key]
+        return batch
 
     def loss(
             self,
@@ -415,20 +407,15 @@ class CPA(PerturbationModel):
         else:
             kl_loss = torch.zeros_like(recon_loss)
 
-        if self.use_adversary:
-            adv_loss = self.adversarial_loss(
-                perturbations, covariates, inference_outputs["z_basal"], self.training
-            )
-        else:
-            adv_loss = {
-                "adv_loss": torch.zeros_like(recon_loss),
-                "penalty_adv": torch.zeros_like(recon_loss),
-                "penalty_covars": torch.zeros_like(recon_loss),
-                "penalty_perts": torch.zeros_like(recon_loss),
-                "acc_perts": torch.zeros_like(recon_loss),
-                "covariate_classfier_loss": torch.zeros_like(recon_loss),
-                "perturbation_classifier_loss": torch.zeros_like(recon_loss),
-            }
+        adv_loss = {
+            "adv_loss": torch.zeros_like(recon_loss),
+            "penalty_adv": torch.zeros_like(recon_loss),
+            "penalty_covars": torch.zeros_like(recon_loss),
+            "penalty_perts": torch.zeros_like(recon_loss),
+            "acc_perts": torch.zeros_like(recon_loss),
+            "covariate_classfier_loss": torch.zeros_like(recon_loss),
+            "perturbation_classifier_loss": torch.zeros_like(recon_loss),
+        }
 
         total_loss = (
                 recon_loss
@@ -449,160 +436,6 @@ class CPA(PerturbationModel):
             "acc_perts": adv_loss["acc_perts"],
         }
 
-    def adversarial_loss(
-            self,
-            perturbations: torch.Tensor,
-            covariates: dict[str, torch.Tensor],
-            z_basal: torch.Tensor,
-            compute_penalty: bool = True,
-    ):
-        """Computes adversarial classification losses and regularizations"""
-        if compute_penalty:
-            z_basal = z_basal.requires_grad_(True)
-
-        covars_pred_logits = {}
-        if self.covars_embeddings is not None:
-            for covar in self.covars_embeddings.keys():
-                if self.covars_adversary_classifiers[covar] is not None:
-                    covars_pred_logits[covar] = self.covars_adversary_classifiers[covar](
-                        z_basal
-                    )
-                else:
-                    covars_pred_logits[covar] = None
-
-        adv_results = {}
-
-        # Classification losses for different covariates
-        if self.covars_embeddings is not None:
-            for covar in self.covars_embeddings.keys():
-                adv_results[f"adv_{covar}"] = (
-                    self.adv_loss_fn(  # we've removed mixup for now
-                        covars_pred_logits[covar],
-                        covariates[covar],
-                    )
-                    if covars_pred_logits[covar] is not None
-                    else torch.as_tensor(0.0).to(self.device)
-                )
-
-                adv_results[f"acc_{covar}"] = (
-                    accuracy(
-                        covars_pred_logits[covar].argmax(1),
-                        covariates[covar].argmax(1),
-                        task="multiclass",
-                        num_classes=len(self.covars_encoder[covar]),  # Use covars_encoder dict
-                    )
-                    if covars_pred_logits[covar] is not None
-                    else torch.as_tensor(0.0).to(self.device)
-                )
-
-        if self.covars_embeddings is not None and len(self.covars_embeddings) > 0:
-            adv_results["covariate_classfier_loss"] = sum(
-                [adv_results[f"adv_{key}"] for key in self.covars_embeddings.keys()]
-            )
-        else:
-            adv_results["covariate_classfier_loss"] = torch.as_tensor(0.0).to(
-                self.device
-            )
-
-        # TODO Not using mixups for now.
-        perturbations_pred_logits = self.perturbation_adversary_classifier(z_basal)
-
-        if self.multi_label_perts:
-            target_multi = (perturbations > 0).float()
-            adv_results["perturbation_classifier_loss"] = self.adv_loss_drugs(
-                perturbations_pred_logits, target_multi
-            )
-            adv_results["acc_perts"] = accuracy(
-                torch.sigmoid(perturbations_pred_logits),
-                target_multi,
-                task="multilabel",
-                num_labels=self.n_perts,
-            )
-        else:
-            target_perts = (
-                perturbations.argmax(1)
-                if perturbations.dim() > 1
-                else perturbations.long().view(-1)
-            )
-            adv_results["perturbation_classifier_loss"] = self.adv_loss_drugs(
-                perturbations_pred_logits, target_perts
-            )
-
-            adv_results["acc_perts"] = accuracy(
-                perturbations_pred_logits.argmax(1),
-                target_perts,
-                average="macro",
-                num_classes=self.n_perts,
-                task="multiclass",
-            )
-
-        adv_results["adv_loss"] = (
-                adv_results["covariate_classfier_loss"]
-                + adv_results["perturbation_classifier_loss"]
-        )
-
-        if compute_penalty:
-            # Penalty losses
-            if self.covars_embeddings is not None:
-                for covar in self.covars_embeddings.keys():
-                    adv_results[f"penalty_{covar}"] = (
-                        (
-                            torch.autograd.grad(
-                                covars_pred_logits[covar].sum(),
-                                z_basal,
-                                create_graph=True,
-                                retain_graph=True,
-                                only_inputs=True,
-                            )[0]
-                            .pow(2)
-                            .mean()
-                        )
-                        if covars_pred_logits[covar] is not None
-                        else torch.as_tensor(0.0).to(self.device)
-                    )
-
-                if len(self.covars_embeddings) > 0:
-                    adv_results["penalty_covars"] = sum(
-                        [
-                            adv_results[f"penalty_{covar}"]
-                            for covar in self.covars_embeddings.keys()
-                        ]
-                    )
-                else:
-                    adv_results["penalty_covars"] = torch.as_tensor(0.0).to(self.device)
-            else:
-                adv_results["penalty_covars"] = torch.as_tensor(0.0).to(self.device)
-
-            adv_results["penalty_perts"] = (
-                torch.autograd.grad(
-                    perturbations_pred_logits.sum(),
-                    z_basal,
-                    create_graph=True,
-                    retain_graph=True,
-                    only_inputs=True,
-                )[0]
-                .pow(2)
-                .mean()
-            )
-
-            adv_results["penalty_adv"] = (
-                    adv_results["penalty_perts"] + adv_results["penalty_covars"]
-            )
-        else:
-            if self.covars_embeddings is not None:
-                for covar in self.covars_embeddings.keys():
-                    adv_results[f"penalty_{covar}"] = torch.as_tensor(0.0).to(self.device)
-            else:
-                adv_results["penalty_covars"] = torch.as_tensor(0.0).to(self.device)
-                adv_results["penalty_perts"] = torch.as_tensor(0.0).to(self.device)
-                adv_results["penalty_adv"] = torch.as_tensor(0.0).to(self.device)
-                return adv_results
-
-            adv_results["penalty_covars"] = torch.as_tensor(0.0).to(self.device)
-            adv_results["penalty_perts"] = torch.as_tensor(0.0).to(self.device)
-            adv_results["penalty_adv"] = torch.as_tensor(0.0).to(self.device)
-
-        return adv_results
 
     def _get_dict_if_none(param):
         param = {} if not isinstance(param, dict) else param
@@ -680,15 +513,6 @@ class CPA(PerturbationModel):
             # Log train_loss (main loss for monitoring)
             self.log("train_loss", total_loss, prog_bar=True, logger=True, batch_size=len(batch), on_step=True, on_epoch=True)
             
-            # Compute training PCC (use mask if enabled)
-            predictions = generative_outputs["predictions"]
-            observed = batch.pert_cell_counts
-            mask = self._get_mask(batch)
-            if mask is not None:
-                mask = mask.to(predictions.device)
-            train_pcc = self._compute_masked_pcc(predictions, observed, mask)
-            self.log("train_PCC", train_pcc, prog_bar=True, logger=True, batch_size=len(batch), on_step=True, on_epoch=True)
-
         # =================== [FIX] Manual scheduler step for manual_optimization mode
         # Since automatic_optimization=False, Lightning won't call scheduler.step() automatically
         schedulers = self.lr_schedulers()
@@ -721,14 +545,6 @@ class CPA(PerturbationModel):
         self.log("val_loss", total_loss, prog_bar=True, logger=True, batch_size=len(batch), on_step=True, on_epoch=True)
         self.log("val_recon_loss", losses["recon_loss"], prog_bar=False, logger=True, batch_size=len(batch), on_step=True, on_epoch=True)
         
-        # Compute validation PCC (use mask if enabled)
-        predictions = generative_outputs["predictions"]
-        observed = batch.pert_cell_counts
-        mask = self._get_mask(batch)
-        if mask is not None:
-            mask = mask.to(predictions.device)
-        val_pcc = self._compute_masked_pcc(predictions, observed, mask)
-        self.log("val_PCC", val_pcc, prog_bar=True, logger=True, batch_size=len(batch), on_step=True, on_epoch=True)
         return total_loss
 
     def predict(self, batch):

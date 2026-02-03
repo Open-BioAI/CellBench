@@ -1,5 +1,13 @@
 export PYTHONPATH=$PYTHONPATH:/fs-computility-new/upzd_share/maoxinjie/AIVC/mxj/perturbench-main/src
-export WANDB_API_KEY=c24d277403208674c2360ed46c8a8812a74911b6
-
-
-train trainer.devices=[0] data=mix_pert data.task=unseen_cell data.data_path="/fs-computility-new/upzd_share/maoxinjie/AIVC/mxj/perturbench-main/data/all_cell_line_filterdrug.h5ad" model=latent_additive logger=wandb logger.wandb.project="perturbench" logger.wandb.name="latent_additive_newloss" trainer.log_every_n_steps=5 trainer.max_epochs=20 trainer.min_epochs=1
+export TMPDIR=/tmp  # 避免 AF_UNIX path too long
+HYDRA_FULL_ERROR=1 train trainer.devices=[0] \
+ data=mix_pert \
+ data.embedding_key='scgpt_embeddings' \
+ data.data_path='./data/norman_hvg_emb.h5ad' \
+ model=latent_additive \
+ model.use_cell_emb=true \
+ model.use_mask=false \
+ logger=wandb \
+ trainer.log_every_n_steps=5 \
+ trainer.max_epochs=20 \
+ trainer.min_epochs=1 \

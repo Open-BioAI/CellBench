@@ -2,8 +2,6 @@ import torch
 import torch.nn as nn
 from typing import Iterable, Optional, Sequence
 
-a=torch.tensor([[1],[3],[2],[1]])
-print(a[torch.tensor([0,1,0,0],dtype=torch.bool)])
 
 class MLP(nn.Module):
     """Simple MLP block reused by modality encoders and the final fusion layer."""
@@ -40,6 +38,13 @@ class MLP(nn.Module):
 
 
 class PertAggregator(nn.Module):
+    """聚合多个扰动 embedding（如多基因扰动）为单个向量
+    
+    支持两种输入格式：
+    1. Padded tensor: (batch, max_n, dim) + lengths (batch,) - 推荐，适合多进程
+    2. List[List[Tensor]] - 兼容旧代码
+    """
+    
     def __init__(
             self,
             emb_dim: int,
@@ -49,57 +54,156 @@ class PertAggregator(nn.Module):
     ) -> None:
         super().__init__()
         self.emb_dim = emb_dim
+        self.output_dim = output_dim
         self.mlp = MLP(emb_dim, output_dim, hidden_dims, dropout)
 
-    def forward(self,pert_batch) -> torch.Tensor:
+    def forward(self, pert_data, lengths=None) -> torch.Tensor:
+        """
+        Args:
+            pert_data: Tensor (batch, max_n, dim) 或 List[List[Tensor]]
+            lengths: Tensor (batch,) - 仅当 pert_data 是 padded tensor 时需要
+        Returns:
+            聚合后的 embedding (batch_size, output_dim)
+        """
+        # 判断输入格式
+        if isinstance(pert_data, torch.Tensor):
+            return self._forward_padded(pert_data, lengths)
+        else:
+            return self._forward_list(pert_data)
+    
+    def _forward_padded(self, pert_tensor, lengths):
+        """处理 padded tensor 格式（快速路径）"""
+        # pert_tensor: (batch, max_n, dim)
+        # lengths: (batch,)
+        batch_size, max_n, dim = pert_tensor.shape
+        device = pert_tensor.device
+        
+        if lengths is None or lengths.sum() == 0:
+            return torch.zeros(batch_size, self.output_dim, device=device)
+        
+        # 创建 mask: (batch, max_n)
+        idx = torch.arange(max_n, device=device).unsqueeze(0)  # (1, max_n)
+        mask = idx < lengths.unsqueeze(1)  # (batch, max_n)
+        
+        # 展平有效的 embedding（使用 reshape 替代 view 避免内存不连续问题）
+        flat_emb = pert_tensor.reshape(-1, dim)  # (batch * max_n, dim)
+        flat_mask = mask.reshape(-1)  # (batch * max_n,)
+        valid_emb = flat_emb[flat_mask]  # (total_valid, dim)
+        
+        if valid_emb.shape[0] == 0:
+            return torch.zeros(batch_size, self.output_dim, device=device)
+        
+        # MLP 处理
+        valid_emb = self.mlp(valid_emb)  # (total_valid, output_dim)
+        
+        # 构建 batch 索引用于 scatter_add（使用 reshape）
+        batch_idx = torch.arange(batch_size, device=device).unsqueeze(1).expand(-1, max_n)  # (batch, max_n)
+        valid_batch_idx = batch_idx.reshape(-1)[flat_mask]  # (total_valid,)
+        
+        # scatter_add 聚合
+        agged = torch.zeros(batch_size, self.output_dim, device=device)
+        idx_expanded = valid_batch_idx.unsqueeze(1).expand(-1, self.output_dim)
+        agged.scatter_add_(0, idx_expanded, valid_emb)
+        
+        return agged
+    
+    def _forward_list(self, pert_batch):
+        """处理 List[List[Tensor]] 格式（兼容旧代码）"""
         batch_size = len(pert_batch)
-        pos_in_batch=[]
-        stack_pert_emb=[]
-
-        for idx,pert_emb_list in enumerate(pert_batch):
-            for pert_emb in pert_emb_list:
-                pos_in_batch.append(idx)
-                stack_pert_emb.append(pert_emb)
-
-        if len(stack_pert_emb) == 0:
-            # 如果没有perturbation，返回零向量
-            return torch.zeros(batch_size, self.mlp.net[-1].out_features, device=next(self.mlp.parameters()).device)
-
-        stack_pert_emb=torch.stack(stack_pert_emb)
-        pos_in_batch=torch.tensor(pos_in_batch,device=stack_pert_emb.device)
+        device = next(self.mlp.parameters()).device
+        
+        total_perts = sum(len(pert_list) for pert_list in pert_batch)
+        
+        if total_perts == 0:
+            return torch.zeros(batch_size, self.output_dim, device=device)
+        
+        stack_pert_emb = []
+        pos_in_batch = torch.empty(total_perts, dtype=torch.long, device=device)
+        
+        idx = 0
+        for batch_idx, pert_emb_list in enumerate(pert_batch):
+            n = len(pert_emb_list)
+            if n > 0:
+                pos_in_batch[idx:idx + n] = batch_idx
+                stack_pert_emb.extend(pert_emb_list)
+                idx += n
+        
+        stack_pert_emb = torch.stack(stack_pert_emb).to(device)
         stack_pert_emb = self.mlp(stack_pert_emb)
-
-        agged_pert_emb=[]
-        for idx in range(batch_size):  # 遍历batch size，而不是perturbation总数，以免出现如果有空字符串，多个“+”导致的错误
-            agged_pert_emb.append(stack_pert_emb[pos_in_batch==idx].sum(dim=0))
-        agged_pert_emb=torch.stack(agged_pert_emb)
-
+        
+        agged_pert_emb = torch.zeros(batch_size, self.output_dim, device=device)
+        pos_expanded = pos_in_batch.unsqueeze(1).expand(-1, self.output_dim)
+        agged_pert_emb.scatter_add_(0, pos_expanded, stack_pert_emb)
+        
         return agged_pert_emb
 
+
 class MixedPerturbationEncoder(nn.Module):
+    """混合扰动编码器：支持基因、药物、环境、CRISPR 多模态扰动"""
 
     def __init__(
             self,
             gene_pert_dim: int,
             drug_pert_dim: int,
-            env_pert_dim:int ,
+            env_pert_dim: int,
+            crispr_pert_dim: int = 1,
             hidden_dims: Optional[Iterable[int]] = None,
-            per_modality_embed_dim: int = 128,
-            final_embed_dim: int = 128,
+            per_modality_embed_dim: int|None = None,
+            final_embed_dim: int | None = None,
             dropout: float = 0.0,
     ) -> None:
         super().__init__()
-        self.gene_encoder=MLP(gene_pert_dim,per_modality_embed_dim,hidden_dims,dropout=dropout)
-        self.drug_encoder = PertAggregator(drug_pert_dim, per_modality_embed_dim, hidden_dims, dropout=dropout)
-        self.env_encoder = MLP(env_pert_dim, per_modality_embed_dim, hidden_dims, dropout=dropout)
+
+        # 缓存编码器存在性（避免 forward 中反复检查）
+        self._has_gene = self.gene_encoder is not None
+        self._has_drug = self.drug_encoder is not None
+        self._has_env = self.env_encoder is not None
+        self._has_crispr = self.crispr_encoder is not None
+        
+        assert per_modality_embed_dim is not None and final_embed_dim is not None,\
+             "per_modality_embed_dim and final_embed_dim must be provided"
+        if final_embed_dim is None:
+            final_embed_dim = per_modality_embed_dim
+        if per_modality_embed_dim is None:
+            per_modality_embed_dim = final_embed_dim
         self.per_modality_embed_dim = per_modality_embed_dim
-        self.fusion_mlp = MLP(per_modality_embed_dim, final_embed_dim)
+        self.final_embed_dim = final_embed_dim
 
-    def forward(self,batch: torch.Tensor,) -> torch.Tensor:
-        gene_pert_emb = self.gene_encoder(batch.gene_pert)
-        drug_pert_emb=self.drug_encoder(batch.drug_pert)
-        env_pert_emb=self.env_encoder(batch.env_pert)
+        self.fusion_mlp = MLP(self.per_modality_embed_dim, final_embed_dim)
+        # 条件创建编码器
+        self.gene_encoder = PertAggregator(gene_pert_dim, self.per_modality_embed_dim, hidden_dims, dropout=dropout)\
+             if gene_pert_dim > 1 else None
+        self.drug_encoder = PertAggregator(drug_pert_dim, self.per_modality_embed_dim, hidden_dims, dropout=dropout)\
+             if drug_pert_dim > 1 else None
+        self.env_encoder = MLP(env_pert_dim, self.per_modality_embed_dim, hidden_dims, dropout=dropout)\
+             if env_pert_dim > 1 else None
+        self.crispr_encoder = MLP(crispr_pert_dim, self.per_modality_embed_dim, hidden_dims, dropout=dropout)\
+             if crispr_pert_dim > 1 else None
 
-        final_pert_emb=gene_pert_emb+drug_pert_emb+env_pert_emb
+    def forward(self, batch) -> torch.Tensor:
+        """
+        支持两种输入格式：
+        1. Padded tensor: batch.gene_pert (B, max_n, dim) + batch.gene_pert_len (B,)
+        2. List 格式: batch.gene_pert = List[List[Tensor]]（兼容旧代码）
+        """
+        # gene embedding
+        if self._has_gene and hasattr(batch, 'gene_pert'):
+            gene_len = getattr(batch, 'gene_pert_len', None)
+            gene_pert_emb = self.gene_encoder(batch.gene_pert, gene_len)
+        else:
+            gene_pert_emb = 0
+        
+        # drug embedding
+        if self._has_drug and hasattr(batch, 'drug_pert'):
+            drug_len = getattr(batch, 'drug_pert_len', None)
+            drug_pert_emb = self.drug_encoder(batch.drug_pert, drug_len)
+        else:
+            drug_pert_emb = 0
+        
+        # env/crispr（单值，不需要聚合）
+        env_pert_emb = self.env_encoder(batch.env_pert) if self._has_env and hasattr(batch, 'env_pert') else 0
+        crispr_pert_emb = self.crispr_encoder(batch.crispr_pert) if self._has_crispr and hasattr(batch, 'crispr_pert') else 0
+
+        final_pert_emb = gene_pert_emb + drug_pert_emb + env_pert_emb + crispr_pert_emb
 
         return self.fusion_mlp(final_pert_emb)  # (B, final_embed_dim)

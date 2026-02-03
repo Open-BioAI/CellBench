@@ -7,14 +7,18 @@ crispr_key: ${data.crispr_key}
 cov_keys: ${data.cov_keys}
 
 #扰动和协变量emb字典储存路径
-crispr_map_path: ${paths.work_dir}/cpa/crispr_map.pt
-gene_map_path: ${paths.work_dir}/cpa/gene_map.pt
-drug_map_path: fs-computility-new/upzd_share/maoxinjie/AIVC/mxj/perturbench-main/SMILES.pt
-env_map_path: ${paths.work_dir}/cpa/env_map.pt
-cov_maps_path: ${paths.work_dir}/cov_maps.pt
+crispr_map_path: null
+gene_map_path: null
+drug_map_path: null
+env_map_path: null
+cov_maps_path: null
 
 null_token: '' #空缺的扰动值用什么代替就填什么
 # use_covs: ${model.inject_covariates_encoder} #从所选的模型yaml配置同步参数
-use_covs: ${data.transform.use_covs}
+use_covs: false
 use_cell_emb: ${model.use_cell_emb}  #是否使用预训练细胞嵌入
 comb_delim: ${data.perturbation_combination_delimiter}
+
+# Padded tensor 参数（适合多进程数据加载）
+max_gene_perts: 2  # 最大基因扰动数（超过会截断）
+max_drug_perts: 2  # 最大药物扰动数（超过会截断）

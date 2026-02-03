@@ -334,10 +334,6 @@ class GEARS(PerturbationModel):
                  on_epoch=True,
                  batch_size=y.shape[0])
 
-        # Compute training PCC (use mask if enabled)
-        train_pcc = self._compute_masked_pcc(pred, y, mask)
-        self.log("train_PCC", train_pcc, prog_bar=True, logger=True, batch_size=y.shape[0], on_step=True, on_epoch=True)
-
         return loss
 
     def validation_step(self, data_tuple, batch_idx):
@@ -361,10 +357,6 @@ class GEARS(PerturbationModel):
             loss = torch.mean(mse, dim=-1).mean()
 
         self.log("val_loss", loss, prog_bar=True, logger=True, batch_size=y.shape[0], on_step=True, on_epoch=True)
-
-        # Compute validation PCC (use mask if enabled)
-        val_pcc = self._compute_masked_pcc(pred, y, mask)
-        self.log("val_PCC", val_pcc, prog_bar=True, logger=True, batch_size=y.shape[0], on_step=True, on_epoch=True)
 
         return loss
 

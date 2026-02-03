@@ -1,5 +1,5 @@
 project: perturbench
-name: sciplex3_hvg_1229_nomask_nocovariate
+name: srivatsan_sciplex3_highdose_0109_nomask_covariate_50epochs_genepert
 method: grid
 
 metric:
@@ -13,19 +13,17 @@ parameters:
   # data.task:
   #   value: srivatsantrapnell2020_sciplex3
   data.data_path:
-    value: /fs-computility-new/upzd_share/maoxinjie/AIVC/mxj/perturbench-main/data/sciplex3_hvg.h5ad
+    value: /fs-computility-new/upzd_share/maoxinjie/AIVC/mxj/perturbench-main/data/sciplex3_highdose_hvg.h5ad
 
   train:
     value: true
   test:
     value: true
-  test_ckpt_type:
-    value: pcc
 
   trainer.log_every_n_steps:
     value: 10
   trainer.max_epochs:
-    value: 10
+    value: 50
   trainer.min_epochs:
     value: 0
   trainer.devices:
@@ -36,7 +34,7 @@ parameters:
   data.test_batch_size:
     value: 256
   data.transform.use_covs:
-    value: false
+    value: true
 
   model.use_mask:
     value: false
@@ -48,7 +46,8 @@ parameters:
 
   # sweep 项（注意：model 只能是单值 categorical，不要让它变成 list）
   model:
-    values: [biolord, cpa, genepert, sclambda, squidiff, decoder_only, gears, latent_additive, linear_additive, prnet, sams_vae, state_sm]
+    # values: [biolord, cpa, genepert, sclambda, squidiff, decoder_only, gears, latent_additive, linear_additive, prnet, sams_vae, state_sm] 
+    values: [genepert]
   
 
   logger:

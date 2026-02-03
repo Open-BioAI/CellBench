@@ -34,12 +34,11 @@ use_drug_structure: False
 drug_dimension: 1024
 comb_num: 2
 schedule_sampler: uniform
-cov_keys: ${data.cov_keys}
 pert_key: ${oc.select:data.pert_key,null}
-use_pretrained_cell_emb: False
-use_cell_emb: ${.use_pretrained_cell_emb}
+use_cell_emb: False
 use_mask: true
 
 # Gene selection settings (optional)
-# n_selected_genes: 500  # Randomly select 500 genes for training (comment out to use all genes)
-# gene_selection_seed: 42  # Random seed for gene selection reproducibility
+n_selected_genes: 500  # Select 500 genes for training (comment out to use all genes)
+gene_selection_method: top_n  # Gene selection method: "random" or "top_n"
+gene_selection_seed: 42  # Random seed for gene selection reproducibility (only used when gene_selection_method="random")

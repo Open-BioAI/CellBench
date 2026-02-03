@@ -112,6 +112,7 @@ class LatentAdditive(PerturbationModel):
         self.pert_encoder = MixedPerturbationEncoder(gene_pert_dim=self.gene_pert_dim,
                                                      drug_pert_dim=self.drug_pert_dim,
                                                      env_pert_dim=self.env_pert_dim,
+                                                     crispr_pert_dim=self.crispr_pert_dim,
                                                      hidden_dims=[latent_dim]*(n_layers-1) if n_layers>1 else [],
                                                      final_embed_dim=latent_dim)
 
@@ -160,26 +161,9 @@ class LatentAdditive(PerturbationModel):
 
         # Use expression mask for loss calculation - only compute loss on expressed genes
         mask = self._get_mask(batch)
-        if mask is not None:
-            mask = mask.to(predicted_perturbed_expression.device)
-            masked_loss = F.mse_loss(
-                predicted_perturbed_expression,
-                observed_perturbed_expression,
-                reduction='none'
-            )
-            # 这样才算给每个batch上有效gene算好mse_loss以后在batch上求平均
-            valid = mask.sum(dim=1)  # 指定维度[batch]
-            loss_per_batch = (masked_loss * mask).sum(dim=1)  # [batch]
-            loss = (loss_per_batch / valid).nanmean()
-        else:
-            # Fallback to standard MSE when use_mask=False or no mask available
-            loss = F.mse_loss(predicted_perturbed_expression, observed_perturbed_expression)
+        loss=self.auto_mse(predicted_perturbed_expression, observed_perturbed_expression, mask)
 
         self.log("train_loss", loss, prog_bar=True, logger=True, on_step=True, on_epoch=True, batch_size=observed_perturbed_expression.size(0))
-
-        # Compute training PCC (use mask if enabled)
-        train_pcc = self._compute_masked_pcc(predicted_perturbed_expression, observed_perturbed_expression, mask)
-        self.log("train_PCC", train_pcc, prog_bar=True, logger=True, batch_size=observed_perturbed_expression.size(0), on_step=True, on_epoch=True)
 
         return loss
 
@@ -194,25 +178,9 @@ class LatentAdditive(PerturbationModel):
 
         # Use expression mask for loss calculation - only compute loss on expressed genes
         mask = self._get_mask(batch)
-        if mask is not None:
-            mask = mask.to(predicted_perturbed_expression.device)
-            masked_loss = F.mse_loss(
-                predicted_perturbed_expression,
-                observed_perturbed_expression,
-                reduction='none'
-            )
-            valid = mask.sum(dim=1)
-            val_loss_per_batch = (masked_loss * mask).sum(dim=1) 
-            val_loss = (val_loss_per_batch / valid).nanmean()
-        else:
-            # Fallback to standard MSE when use_mask=False or no mask available
-            val_loss = F.mse_loss(predicted_perturbed_expression, observed_perturbed_expression)
+        val_loss=self.auto_mse(predicted_perturbed_expression, observed_perturbed_expression, mask)
 
         self.log("val_loss", val_loss, prog_bar=True, logger=True, batch_size=observed_perturbed_expression.size(0), on_step=True, on_epoch=True)
-
-        # Compute validation PCC (use mask if enabled)
-        val_pcc = self._compute_masked_pcc(predicted_perturbed_expression, observed_perturbed_expression, mask)
-        self.log("val_PCC", val_pcc, prog_bar=True, logger=True, batch_size=observed_perturbed_expression.size(0), on_step=True, on_epoch=True)
 
         return val_loss
 

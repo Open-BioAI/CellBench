@@ -19,6 +19,7 @@ class BiolordStar(PerturbationModel):
         latent_dim: int = 32,
         penalty_weight: float = 10000.0,
         noise: float = 0.1,
+        use_cell_emb: bool=False,
         lr: float | None = None,
         wd: float | None = None,
         lr_scheduler_freq: int | None = None,
@@ -34,7 +35,7 @@ class BiolordStar(PerturbationModel):
         use_mask: bool = False,  # Unified mask switch for training loss and evaluation
         use_covs: bool = False,  # Unified covariate usage parameter
         datamodule: L.LightningDataModule | None = None,
-            **kwargs,
+        **kwargs,
     ):
         """
         The constructor for the BiolordStar class.
@@ -82,6 +83,7 @@ class BiolordStar(PerturbationModel):
             use_covs = True
 
         self.use_covs = use_covs
+        self.use_cell_emb=use_cell_emb
         self.save_hyperparameters(ignore=["datamodule"])
 
         n_total_covariates = datamodule.train_dataset.transform.n_total_covs
@@ -92,7 +94,11 @@ class BiolordStar(PerturbationModel):
             torch.randn(latent_dim, n_total_covariates)
         )
         self.gene_encoder = MLP(
-            self.n_genes, encoder_width, latent_dim, n_layers, dropout
+            self.n_genes if not use_cell_emb else self.embedding_dim,
+            encoder_width,
+             latent_dim,
+              n_layers, 
+              dropout
         )
         self.decoder = MLP(
             decoder_input_dim, encoder_width, self.n_genes, n_layers, dropout
@@ -100,6 +106,7 @@ class BiolordStar(PerturbationModel):
         self.pert_encoder = MixedPerturbationEncoder(gene_pert_dim=self.gene_pert_dim,
                                                      drug_pert_dim=self.drug_pert_dim,
                                                      env_pert_dim=self.env_pert_dim,
+                                                     crisper_pert_dim=self.crisper_pert_dim,
                                                      hidden_dims=[latent_dim]*(n_layers-1) if n_layers>1 else [],
                                                      final_embed_dim=latent_dim)
 
@@ -187,18 +194,9 @@ class BiolordStar(PerturbationModel):
         
         # Get control expression for training (consistent with prediction)
         # Must have control expression to avoid training contamination
-        if hasattr(batch, "control_cell_counts"):
+        if not self.use_cell_emb:
             control_expression = batch.control_cell_counts
-        elif hasattr(batch, "control_cell_emb"):
-            control_expression = batch.control_cell_emb
-        elif hasattr(batch, "controls"):
-            control_expression = batch.controls
-        else:
-            raise AttributeError(
-                f"Batch does not have control expression for training. "
-                f"Biolord requires 'control_cell_counts', 'control_cell_emb', or 'controls' attribute. "
-                f"Available attributes: {list(batch.keys()) if hasattr(batch, 'keys') else dir(batch)}"
-            )
+        else : control_expression = batch.control_cell_emb
 
         # Training: add noise for regularization
         predicted_perturbed_expression, penalty = self.forward(
@@ -206,41 +204,17 @@ class BiolordStar(PerturbationModel):
         )
         # Use expression mask for loss calculation - only compute loss on expressed genes
         mask = self._get_mask(batch)
-        if mask is not None:
-            mask = mask.to(predicted_perturbed_expression.device)
-            masked_loss = F.mse_loss(
-                predicted_perturbed_expression,
-                observed_perturbed_expression,
-                reduction="none",
-            )
-            # 这样才算给每个batch上有效gene算好mse_loss以后在batch上求平均
-            valid = mask.sum(dim=1)  # 指定维度[batch]
-            recon_loss_per_batch = (masked_loss * mask).sum(dim=1)  # [batch]
-            recon_loss = (recon_loss_per_batch / valid).nanmean()
-        else:
-            # Fallback to standard MSE
-            recon_loss = F.mse_loss(
-                predicted_perturbed_expression,
-                observed_perturbed_expression,
-                reduction="mean",
-            )
+        recon_loss=self.auto_mse(predicted_perturbed_expression, observed_perturbed_expression, mask)
 
         # Total loss includes penalty (this is what we optimize)
         penalty_term = self.penalty_weight * penalty
         total_loss = recon_loss + penalty_term
-
-        # Compute training PCC (use mask if enabled)
-        mask = self._get_mask(batch)
-        if mask is not None:
-            mask = mask.to(predicted_perturbed_expression.device)
-        train_pcc = self._compute_masked_pcc(predicted_perturbed_expression, observed_perturbed_expression, mask)
 
         # Log both reconstruction loss and total loss (with penalty)
         self.log("train_recon_loss", recon_loss, prog_bar=True, logger=True, batch_size=len(batch), on_step=True, on_epoch=True)
         self.log("train_penalty", penalty, prog_bar=False, logger=True, batch_size=len(batch), on_step=True, on_epoch=True)
         self.log("train_penalty_term", penalty_term, prog_bar=False, logger=True, batch_size=len(batch), on_step=True, on_epoch=True)
         self.log("train_loss", total_loss, prog_bar=True, logger=True, batch_size=len(batch), on_step=True, on_epoch=True)
-        self.log("train_PCC", train_pcc, prog_bar=True, logger=True, batch_size=len(batch), on_step=True, on_epoch=True)
         return total_loss
 
     def validation_step(self, data_tuple, batch_idx: int):
@@ -249,18 +223,9 @@ class BiolordStar(PerturbationModel):
         
         # Get control expression for validation (consistent with prediction)
         # Must have control expression to avoid validation contamination
-        if hasattr(batch, "control_cell_counts"):
+        if not self.use_cell_emb:
             control_expression = batch.control_cell_counts
-        elif hasattr(batch, "control_cell_emb"):
-            control_expression = batch.control_cell_emb
-        elif hasattr(batch, "controls"):
-            control_expression = batch.controls
-        else:
-            raise AttributeError(
-                f"Batch does not have control expression for validation. "
-                f"Biolord requires 'control_cell_counts', 'control_cell_emb', or 'controls' attribute. "
-                f"Available attributes: {list(batch.keys()) if hasattr(batch, 'keys') else dir(batch)}"
-            )
+        else : control_expression = batch.control_cell_emb
 
         # Validation: no noise (deterministic evaluation)
         predicted_perturbed_expression, penalty = self.forward(
@@ -268,55 +233,24 @@ class BiolordStar(PerturbationModel):
         )
         # Use expression mask for loss calculation - only compute loss on expressed genes
         mask = self._get_mask(batch)
-        if mask is not None:
-            mask = mask.to(predicted_perturbed_expression.device)
-            masked_loss = F.mse_loss(
-                predicted_perturbed_expression,
-                observed_perturbed_expression,
-                reduction="none",
-            )
-            valid = mask.sum(dim=1) 
-            val_recon_loss_per_batch = (masked_loss * mask).sum(dim=1)  # [batch]
-            val_recon_loss = (val_recon_loss_per_batch / valid).nanmean()
-        else:
-            # Fallback to standard MSE
-            val_recon_loss = F.mse_loss(
-                predicted_perturbed_expression,
-                observed_perturbed_expression,
-                reduction="mean",
-            )
+        val_recon_loss=self.auto_mse(predicted_perturbed_expression, observed_perturbed_expression, mask)
         
         # Total loss includes penalty
         penalty_term = self.penalty_weight * penalty
         val_loss = val_recon_loss + penalty_term
-
-        # Compute validation PCC (use mask if enabled)
-        mask = self._get_mask(batch)
-        if mask is not None:
-            mask = mask.to(predicted_perturbed_expression.device)
-        val_pcc = self._compute_masked_pcc(predicted_perturbed_expression, observed_perturbed_expression, mask)
 
         # Log both reconstruction loss and total loss (with penalty)
         self.log("val_recon_loss", val_recon_loss, on_step=True, on_epoch=True, prog_bar=False, logger=True, batch_size=len(batch))
         self.log("val_penalty", penalty, on_step=True, on_epoch=True, prog_bar=False, logger=True, batch_size=len(batch))
         self.log("val_penalty_term", penalty_term, on_step=True, on_epoch=True, prog_bar=False, logger=True, batch_size=len(batch))
         self.log("val_loss", val_loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, batch_size=len(batch))
-        self.log("val_PCC", val_pcc, on_step=True, on_epoch=True, prog_bar=True, logger=True, batch_size=len(batch))
         return val_loss
 
     def predict(self, batch):
         # Get control expression - handle different batch formats
-        if hasattr(batch, "controls"):
-            control_expression = batch.controls
-        elif hasattr(batch, "control_cell_counts"):
+        if not self.use_cell_emb:
             control_expression = batch.control_cell_counts
-        elif hasattr(batch, "control_cell_emb"):
-            control_expression = batch.control_cell_emb
-        else:
-            raise AttributeError(
-                f"Batch does not have 'controls', 'control_cell_counts', or 'control_cell_emb' attribute. "
-                f"Available attributes: {dir(batch)}"
-            )
+        else : control_expression = batch.control_cell_emb
         
         control_expression = control_expression.to(self.device)
 

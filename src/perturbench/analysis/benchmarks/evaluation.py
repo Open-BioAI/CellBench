@@ -150,6 +150,7 @@ class Evaluation:
             "logp",
             "var",
             "var-logfc",
+            "delta",
         ]:
             raise ValueError("Invalid aggregation method")
 
@@ -243,7 +244,7 @@ class Evaluation:
 
         if metric not in [
             "pearson",
-            # 'spearman',
+            'spearman',
             "r2_score",
             "mse",
             "rmse",

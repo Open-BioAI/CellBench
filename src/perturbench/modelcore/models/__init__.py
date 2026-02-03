@@ -1,5 +1,5 @@
 from .base import PerturbationModel
-from .state.tx.models.state_transition import StateTransitionPerturbationModel
+from .state_transition import StateTransitionPerturbationModel
 from .gears import  GEARS
 from .genepert import GenePert
 from .sclambda import scLAMBDA

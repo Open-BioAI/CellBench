@@ -1,6 +1,6 @@
 from sklearn.metrics import r2_score
 from sklearn.metrics.pairwise import euclidean_distances, rbf_kernel
-from scipy.stats import pearsonr
+from scipy.stats import pearsonr, spearmanr
 import numpy as np
 from numpy.linalg import norm
 import pandas as pd
@@ -13,8 +13,8 @@ def compute_metric(x, y, metric):
 
     if metric == "pearson":
         score = pearsonr(x, y)[0]
-    # elif metric == 'spearman':
-    #     score = spearmanr(x, y)[0]
+    elif metric == 'spearman':
+         score = spearmanr(x, y)[0]
     elif metric == "r2_score":
         score = r2_score(x, y)
     elif metric == "cosine":

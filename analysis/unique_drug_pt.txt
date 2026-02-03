@@ -1,0 +1,208 @@
+2-methoxyestradiol
+a-366
+abexinostat
+abt-737
+ac480
+afatinib
+ag-14361
+ag-490
+aicar
+alendronate sodium trihydrate
+alisertib
+altretamine
+alvespimycin
+alvespimycin hcl
+amg-900
+aminoglutethimide
+amisulpride
+anacardic acid
+andarine
+ar-42
+at9283
+aurora a inhibitor i
+avagacestat
+az 960
+azacitidine
+azd1480
+azd5591
+barasertib
+baricitinib
+belinostat
+bisindolylmaleimide ix
+bms
+bms-265246
+bms-536924
+bms-754807
+bms-911543
+bortezomib
+bosutinib
+brd3379
+brd4770
+busulfan
+capecitabine
+carmofur
+cediranib
+celecoxib
+cep-33779
+cerdulatinib
+cimetidine
+clevudine
+costunolide
+crizotinib
+cudc-101
+cudc-907
+curcumin
+cyc116
+cyclocytidine hcl
+dabrafenib
+dacinostat
+danusertib
+daphnetin
+dasatinib
+decitabine
+dex
+disulfiram
+divalproex sodium
+droxinostat
+eed226
+ellagic acid
+enmd-2076
+enmd-2076 l--tartaric acid
+entacapone
+entinostat
+enzastaurin
+epothilone a
+everolimus
+fasudil hcl
+fedratinib
+filgotinib
+flavopiridol hcl
+flll32
+fluorouracil
+fulvestrant
+g007-lk
+gandotinib
+gemcitabine
+givinostat
+glesatinib?
+gsk j1
+gsk-lsd1 2hcl
+gsk1070916
+hesperadin
+idasanutlin
+iniparib
+ino-1001
+iox2
+itsa-1
+ivosidenib
+jnj-26854165
+jnj-7706621
+jq1
+ki16425
+ki8751
+kw-2449
+lapatinib ditosylate
+lenalidomide
+linifanib
+lomustine
+luminespib
+m344
+maraviroc
+mc1568
+meprednisone
+mercaptopurine
+mesna
+mk-0752
+mk-5108
+mln8054
+mocetinostat
+momelotinib
+motesanib diphosphate
+navitoclax
+nilotinib
+nintedanib
+nutlin
+nvp-bsk805 2hcl
+obatoclax mesylate
+ofloxacin
+osimertinib
+panobinostat
+patupilone
+pci-34051
+pci-34501
+pd173074
+pd98059
+pelitinib
+pf-3845
+pf-573228
+pfi-1
+pha-680632
+pirarubicin
+pj34
+pracinostat
+prednisone
+prexasertib
+quercetin
+quisinostat 2hcl
+raltitrexed
+ramelteon
+regorafenib
+resminostat
+resveratrol
+rg108
+rigosertib
+roscovitine
+roxadustat
+rucaparib phosphate
+ruxolitinib
+s-ruxolitinib
+s3i-201
+saha
+sb431542
+selisistat
+sgi-1776 free base
+sirtinol
+sl-327
+sns-314
+sodium phenylbutyrate
+sorafenib
+sorafenib tosylate
+srt1720
+srt1720 hcl
+srt2104
+srt3025
+srt3025 hcl
+streptozotocin
+tacedinaline
+tak-901
+tanespimycin
+taselisib
+tazemetostat
+temsirolimus
+tg101209
+tgx-221
+thalidomide
+thiotepa
+tie2 kinase inhibitor
+tmp195
+tofacitinib citrate
+toremifene citrate
+tozasertib
+trametinib
+tranylcypromine hcl
+triamcinolone acetonide
+trichostatin a
+tubastatin a hcl
+tucidinostat
+unc0379
+unc0631
+unc1999
+valproic acid sodium salt
+vandetanib
+veliparib
+whi-p154
+wp1066
+xav-939
+ym155
+zileuton
+zm 447439

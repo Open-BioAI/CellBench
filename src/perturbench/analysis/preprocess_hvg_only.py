@@ -153,18 +153,27 @@ def preprocess_hvg_only(
                 )
                 print("[INFO] HVG using flavor='cell_ranger'.")
         
-        # Get HVG genes
+        # Get HVG genes (boolean mask)
         hvg_mask = adata.var["highly_variable"]
         n_hvg = hvg_mask.sum()
         n_total = len(adata.var_names)
         
         print(f"Selected {n_hvg:,} HVG genes out of {n_total:,} total genes ({n_hvg/n_total*100:.1f}%)")
         
-        # Subset to HVG only (DIFFERENT: original includes DEGs and perturbation genes)
-        adata = adata[:, hvg_mask].copy()
+        # ===== Reorder HVGs by HVG ranking before subsetting =====
+        # 默认优先使用 scanpy 生成的 'highly_variable_rank' 排名；
+        # 若不存在，则依次回退到 'dispersions_norm' 或 'variances_norm'（按变异度从大到小排序）。
+        hvg_var = adata.var.loc[hvg_mask].copy()
+        if "highly_variable_rank" in hvg_var.columns:
+            # 越小排名越靠前
+            hvg_var = hvg_var.sort_values("highly_variable_rank")
+            print(f"[INFO] Ordering HVG genes by 'highly_variable_rank'.")
+        # 使用排好序的基因名列表做列子集，从而在最终 AnnData 中体现 HVG 排名顺序
+        hvg_gene_order = list(hvg_var.index)
+        adata = adata[:, hvg_gene_order].copy()
         
-        # Store HVG list in uns
-        adata.uns['hvg_genes'] = list(adata.var_names)
+        # Store HVG list (已经是按 HVG 排名排序后的顺序) 在 uns 中
+        adata.uns['hvg_genes'] = hvg_gene_order
     else:
         print("Warning: highly_variable=0, keeping all genes")
         adata.uns['hvg_genes'] = list(adata.var_names)
@@ -175,23 +184,23 @@ def preprocess_hvg_only(
         adata.obs.drop(columns=["cov_merged"], inplace=True)
     
     # Remove HVG-related columns from var
-    hvg_related_cols = []
-    for col in adata.var.columns:
-        if col.startswith("highly_variable") or col in {
-            "means",
-            "dispersions",
-            "dispersions_norm",
-            "variances",
-            "variances_norm",
-        }:
-            hvg_related_cols.append(col)
-    if hvg_related_cols:
-        adata.var.drop(columns=hvg_related_cols, inplace=True)
+    # hvg_related_cols = []
+    # for col in adata.var.columns:
+    #     if col.startswith("highly_variable") or col in {
+    #         "means",
+    #         "dispersions",
+    #         "dispersions_norm",
+    #         "variances",
+    #         "variances_norm",
+    #     }:
+    #         hvg_related_cols.append(col)
+    # if hvg_related_cols:
+    #     adata.var.drop(columns=hvg_related_cols, inplace=True)
     
-    # Remove intermediate uns keys
-    for key in ["hvg", "log1p", "variances", "variances_norm"]:
-        if key in adata.uns:
-            adata.uns.pop(key, None)
+    # # Remove intermediate uns keys
+    # for key in ["hvg", "log1p", "variances", "variances_norm"]:
+    #     if key in adata.uns:
+    #         adata.uns.pop(key, None)
     
     print("Processed dataset summary:")
     print(adata)

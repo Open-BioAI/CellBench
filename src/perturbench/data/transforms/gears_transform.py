@@ -3,9 +3,8 @@ from .base  import TransformBase
 class GearsTransform(TransformBase):
     def __init__(self,
                  obs_df,
-                 mode,
                  pert_key):
-        super().__init__(obs_df,mode)
+        super().__init__(obs_df)
         self.pert_key = pert_key
 
     def __call__(self, example):

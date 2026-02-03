@@ -242,6 +242,86 @@ def logp_adata(
     else:
         return logp_full
 
+def delta_helper(adata, pert_col, delim, ctrl=None):
+    """Compute delta expression: avg(pert_expression) - avg(ctrl_expression)"""
+    unique_perts = adata.obs[pert_col].cat.categories
+
+    if ctrl is not None:
+        avg = average_adata(adata, cols=[pert_col], delim=delim, return_h5=False)
+        unique_perts = [x for x in unique_perts if x != ctrl]
+
+    delta = pd.DataFrame(0.0, index=unique_perts, columns=adata.var_names)
+    for i, p in enumerate(unique_perts):
+        if ctrl is not None:
+            avg_p = avg.loc[p]
+            avg_ctrl = avg.loc[ctrl]
+        else:
+            avg_p = adata[adata.obs[pert_col] == p, :].X.mean(0)
+            avg_ctrl = adata[adata.obs[pert_col] != p, :].X.mean(0)
+
+        # Handle sparse matrix output (returns matrix, need to convert to array)
+        if hasattr(avg_p, 'A1'):
+            avg_p = avg_p.A1
+        if hasattr(avg_ctrl, 'A1'):
+            avg_ctrl = avg_ctrl.A1
+        if isinstance(avg_p, np.matrix):
+            avg_p = np.asarray(avg_p).flatten()
+        if isinstance(avg_ctrl, np.matrix):
+            avg_ctrl = np.asarray(avg_ctrl).flatten()
+
+        delta.iloc[i] = avg_p - avg_ctrl
+
+    delta.fillna(0.0, inplace=True)
+    return delta
+
+
+def delta_adata(
+    adata,
+    pert_col,
+    ctrl=None,
+    cov_cols=[],
+    delim="_",
+    return_h5=False,
+):
+    """Compute delta expression (avg pert - avg ctrl) per perturbation/covariate"""
+    assert pert_col in adata.obs.columns
+
+    if ctrl is not None:
+        assert ctrl in adata.obs[pert_col].cat.categories
+
+    if len(cov_cols) > 0:
+        for col in cov_cols:
+            assert col in adata.obs.columns
+        covs = merge_cols(adata.obs, cov_cols, delim=delim)
+
+    if len(cov_cols) <= 0:
+        delta_full = delta_helper(adata, pert_col, delim, ctrl=ctrl)
+
+    else:
+        delta_list = []
+        for cov in covs.cat.categories:
+            delta = delta_helper(
+                adata[covs == cov, :],
+                pert_col,
+                delim,
+                ctrl=ctrl,
+            )
+            delta.index = str(cov) + delim + delta.index.astype(str)
+            delta_list.append(delta)
+
+        delta_full = pd.concat(delta_list)
+
+    if return_h5:
+        delta_ad = sc.AnnData(delta_full)
+        cols = cov_cols + [pert_col]
+        for i, col in enumerate(cols):
+            delta_ad.obs[col] = [x.split(delim)[i] for x in delta_ad.obs_names]
+            delta_ad.obs[col] = delta_ad.obs[col].astype("category")
+        return delta_ad
+
+    else:
+        return delta_full
+
 
 def aggr_helper(
     adata,
@@ -308,6 +388,15 @@ def aggr_helper(
             delim=delim,
             return_h5=True,
             **kwargs,
+        )
+    elif aggr_method == "delta":
+        agg_adata = delta_adata(
+            adata,
+            pert_col=pert_col,
+            ctrl=ctrl,
+            cov_cols=cov_cols,
+            delim=delim,
+            return_h5=True,
         )
 
     if cov_cols is not None and len(cov_cols) > 0:

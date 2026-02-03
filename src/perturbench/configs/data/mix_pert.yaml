@@ -6,6 +6,7 @@ defaults:
   - evaluation: default                                 #加载evaluation配置
 
 _target_: perturbench.data.modules.PertDataModule
+mask_type: cell
 data_path: ./data/all_cell_line_filterdrug.h5ad    #预处理好的anndata路径
 train_batch_size: 300                                   #训练批次大小
 val_batch_size: 300                                     #验证批次大小
@@ -21,15 +22,17 @@ perturbation_combination_delimiter: +                   #eg：双扰动数据扰
 embedding_key: null #None                               #若不为null，训练时提取adata.obsm[embedding_key]，作为模型输入训练
 cov_avg_sampling: False                                 #若为true，在训练时对每种协变量抽取cells比例相同
 add_keys: null                                          #补充还想用到的obs列
-train_num_workers: 0   # Reduced to avoid memory leaks
-val_num_workers: 0     # Reduced to avoid memory leaks
-test_num_workers: 0    # Reduced to avoid memory leaks
+train_num_workers: 4   # Padded tensor 格式支持多进程
+val_num_workers: 2
+test_num_workers: 2
 task: null                                                  # Task name for external CSV split: unseen_cell / single_dataset_test / single_dataset_two_cellline / two_datasets_two_celllines
 split_dir: null                                             # Base directory for split CSV files (default: ./split)
 # cell_set_len and sample_mode are automatically set by train.py based on model type:
 # - state_transition models: sample_mode=set, cell_set_len from model config (default 128)
 # - other models: sample_mode=cell, cell_set_len=None
 # Do not set cell_set_len here manually!
-
+sample_mode: cell
+cell_set_len: 128
+n_top_hvgs: null                                        #若不为null，训练时只使用前n_top_hvgs个基因
 # splitter:
 #   max_heldout_fraction_per_covariate: 0.7               #重写覆盖splitter的参数

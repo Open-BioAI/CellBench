@@ -71,9 +71,18 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         dest="data_test_batch_size",
         type=int,
     )
+    parser.add_argument("--data.train_num_workers", dest="data_train_num_workers", type=int)
+    parser.add_argument("--data.val_num_workers", dest="data_val_num_workers", type=int)
+    parser.add_argument("--data.test_num_workers", dest="data_test_num_workers", type=int)
+    parser.add_argument("--data.embedding_key", dest="data_embedding_key", type=str)
     parser.add_argument(
         "--data.transform.use_covs",
         dest="data_transform_use_covs",
+        type=str,
+    )
+    parser.add_argument(
+        "--data.transform.drug_map_path",
+        dest="data_transform_drug_map_path",
         type=str,
     )
 
@@ -159,7 +168,12 @@ def _apply_cli_overrides(cfg: DictConfig, args: argparse.Namespace | None) -> Di
         # "trainer_devices" is translated to a Hydra override in __main__
         "data_val_batch_size": "data.val_batch_size",
         "data_test_batch_size": "data.test_batch_size",
+        "data_train_num_workers": "data.train_num_workers",
+        "data_val_num_workers": "data.val_num_workers",
+        "data_test_num_workers": "data.test_num_workers",
+        "data_embedding_key": "data.embedding_key",
         "data_transform_use_covs": "data.transform.use_covs",
+        "data_transform_drug_map_path": "data.transform.drug_map_path",
         "model_use_mask": "model.use_mask",
         "model_use_cell_emb": "model.use_cell_emb",
         "data_train_batch_size": "data.train_batch_size",

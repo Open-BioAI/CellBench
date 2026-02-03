@@ -140,6 +140,7 @@ class scLAMBDA(PerturbationModel):
                 gene_pert_dim=self.gene_pert_dim,
                 drug_pert_dim=self.drug_pert_dim,
                 env_pert_dim=self.env_pert_dim,
+                crispr_pert_dim=self.crispr_pert_dim,
                 final_embed_dim=pert_embed_dim,
             )
             self.p_dim = pert_embed_dim
@@ -164,7 +165,8 @@ class scLAMBDA(PerturbationModel):
 
         # Initialize network
         self.Net = scLAMBDANet(
-            x_dim=self.n_genes,
+            input_dim=self.n_genes,
+            output_dim=self.n_genes,
             p_dim=p_dim_encoder,  # Encoder input dimension (includes covariates)
             latent_dim=self.latent_dim,
             hidden_dim=self.hidden_dim,
@@ -172,7 +174,7 @@ class scLAMBDA(PerturbationModel):
         )
 
         # Control statistics (will be computed in setup())
-        self.register_buffer("ctrl_mean", torch.zeros(self.n_genes))
+        self.register_buffer("ctrl_mean", torch.zeros(self.n_genes ))
 
     def _load_gene_embeddings(self, embedding_path: str | None) -> dict:
         """Load gene embeddings from pickle file."""
@@ -283,11 +285,7 @@ class scLAMBDA(PerturbationModel):
     def unpack_batch(self, batch):
         """Unpack batch and prepare inputs for scLAMBDA."""
         # Get gene expression
-        if hasattr(batch, "gene_expression"):
-            x = batch.gene_expression.squeeze()  # [batch_size, n_genes]
-        else:
-            x = batch.pert_cell_counts.squeeze()
-
+        x = batch.pert_cell_counts
         if self.use_mix_pert:
             p = self.pert_encoder(batch)  # [batch_size, p_dim]
             pert_names = None
@@ -402,16 +400,7 @@ class scLAMBDA(PerturbationModel):
         Args:
             mask: Optional expression mask for masked loss calculation.
         """
-        if mask is not None:
-            # Masked reconstruction loss - unified per-batch calculation
-            mse = (x_hat - x) ** 2  # [batch_size, n_genes]
-            mask = mask.to(mse.device)
-            valid = mask.sum(dim=1)  # [batch_size] - per-batch valid gene count
-            loss_per_batch = (mse * mask).sum(dim=1)  # [batch_size] - per-batch loss
-            return 0.5 * (loss_per_batch / valid).nanmean()
-        else:
-            return 0.5 * torch.mean(torch.sum((x_hat - x) ** 2, dim=1))
-
+        return self.auto_mse(x_hat, x, mask)*0.5
     def loss_MINE(
         self,
         mean_z: torch.Tensor,
@@ -513,13 +502,6 @@ class scLAMBDA(PerturbationModel):
                     on_epoch=True,
                 )
 
-        # Compute training PCC (use mask if enabled)
-        # predictions = x_hat + ctrl_mean, observed = x + ctrl_mean = pert_cell_counts
-        predictions = outputs["x_hat"] + self.ctrl_mean.unsqueeze(0)
-        observed = batch.pert_cell_counts
-        train_pcc = self._compute_masked_pcc(predictions, observed, mask)
-        self.log("train_PCC", train_pcc, prog_bar=True, logger=True, batch_size=len(batch), on_step=True, on_epoch=True)
-
         return losses["total_loss"]
 
     def validation_step(self,data_tuple, batch_idx: int):
@@ -559,12 +541,6 @@ class scLAMBDA(PerturbationModel):
 
         # Log validation loss
         self.log("val_loss", losses["total_loss"], prog_bar=True, logger=True, batch_size=len(batch), on_step=True, on_epoch=True)
-
-        # Compute validation PCC (use mask if enabled)
-        predictions = outputs["x_hat"] + self.ctrl_mean.unsqueeze(0)
-        observed = batch.pert_cell_counts
-        val_pcc = self._compute_masked_pcc(predictions, observed, mask)
-        self.log("val_PCC", val_pcc, prog_bar=True, logger=True, batch_size=len(batch), on_step=True, on_epoch=True)
 
         return losses["total_loss"]
 

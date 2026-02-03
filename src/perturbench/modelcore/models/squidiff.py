@@ -67,6 +67,7 @@ class ConditionEncoder(nn.Module):
 class Squidiff(PerturbationModel):
     def __init__(
         self,
+        use_cell_emb: bool = False,
         z_latent_dim: int = 60,
         cond_hidden: int = 2048,
         cond_dropout: float = 0.1,
@@ -99,8 +100,6 @@ class Squidiff(PerturbationModel):
         comb_num: int = 1,
 
         schedule_sampler: str = "uniform",
-        use_pretrained_cell_emb:bool= False,
-        use_cell_emb: bool | None = None,
         use_mask: bool = False,  # 控制是否使用mask计算loss，默认不启用
         n_selected_genes: int | None = None,  # 随机选择指定数量的基因，None表示使用所有基因
         gene_selection_seed: int = 42,  # 基因选择的随机种子
@@ -126,8 +125,7 @@ class Squidiff(PerturbationModel):
 
         self.use_covs = use_covs
         self.n_perts=datamodule.train_dataset.transform.n_perts
-        self.use_pretrained_cell_emb = use_pretrained_cell_emb if use_cell_emb is None else use_cell_emb
-        self.use_cell_emb = self.use_pretrained_cell_emb
+        self.use_cell_emb = self.use_cell_emb
 
         # Handle gene selection
         self.n_selected_genes = n_selected_genes
@@ -166,6 +164,7 @@ class Squidiff(PerturbationModel):
                 gene_pert_dim=self.gene_pert_dim,
                 drug_pert_dim=self.drug_pert_dim,
                 env_pert_dim=self.env_pert_dim,
+                crispr_pert_dim=self.crispr_pert_dim,
                 final_embed_dim=z_latent_dim,
                 dropout=cond_dropout,
             )
@@ -209,12 +208,10 @@ class Squidiff(PerturbationModel):
         self.save_hyperparameters(ignore=["datamodule"])
 
     def _get_control_expression(self, batch: Batch) -> torch.Tensor:
-        if hasattr(batch, "controls"):
-            expr = batch.controls
-        elif hasattr(batch, "control_cell_counts"):
-            expr = batch.control_cell_counts
-        else:
+        if self.use_cell_emb:
             expr = batch.control_cell_emb
+        else:
+            expr = batch.control_cell_counts
 
         # Apply gene selection if specified
         if self.selected_gene_indices is not None:
@@ -262,47 +259,12 @@ class Squidiff(PerturbationModel):
         loss = self._loss_on_batch(batch)
         self.log("train_loss", loss, prog_bar=True, on_step=True, on_epoch=True, batch_size=len(batch))
 
-        # Compute training PCC (use mask if enabled)
-        # Note: For diffusion models, we compute PCC on actual sample vs observed during training
-        # This is expensive, so we only do it occasionally
-        if batch_idx % 100 == 0:  # Log PCC every 100 batches to reduce overhead
-            with torch.no_grad():
-                predictions = self.predict(batch)
-                observed = batch.pert_cell_counts.squeeze()
-                # Apply gene selection to observed data for comparison
-                if self.selected_gene_indices is not None:
-                    observed = observed[:, self.selected_gene_indices]
-                mask = self._get_mask(batch)
-                if mask is not None:
-                    mask = mask.to(predictions.device)
-                    # Apply gene selection to mask as well
-                    if self.selected_gene_indices is not None:
-                        mask = mask[:, self.selected_gene_indices]
-                train_pcc = self._compute_masked_pcc(predictions, observed, mask)
-                self.log("train_PCC", train_pcc, prog_bar=True, logger=True, batch_size=len(batch), on_step=True, on_epoch=True)
-
         return loss
 
     def validation_step(self, data_tuple, batch_idx: int):
         batch,_=data_tuple
         loss = self._loss_on_batch(batch)
         self.log("val_loss", loss, prog_bar=True, logger=True, batch_size=len(batch), on_step=True, on_epoch=True)
-
-        # Compute validation PCC (use mask if enabled)
-        with torch.no_grad():
-            predictions = self.predict(batch)
-            observed = batch.pert_cell_counts.squeeze()
-            # Apply gene selection to observed data for comparison
-            if self.selected_gene_indices is not None:
-                observed = observed[:, self.selected_gene_indices]
-            mask = self._get_mask(batch)
-            if mask is not None:
-                mask = mask.to(predictions.device)
-                # Apply gene selection to mask as well
-                if self.selected_gene_indices is not None:
-                    mask = mask[:, self.selected_gene_indices]
-            val_pcc = self._compute_masked_pcc(predictions, observed, mask)
-            self.log("val_PCC", val_pcc, prog_bar=True, logger=True, batch_size=len(batch), on_step=True, on_epoch=True)
 
         return loss
 
@@ -330,27 +292,6 @@ class Squidiff(PerturbationModel):
                 predicted_expression = torch.as_tensor(predicted_expression, device=device, dtype=y.dtype)
             else:
                 predicted_expression = predicted_expression.to(device, non_blocking=True)
-
-            # Get mask and apply gene selection
-            mask = self._get_mask(batch)
-            if mask is not None:
-                mask = mask.to(device, non_blocking=True)
-                if self.selected_gene_indices is not None:
-                    mask = mask[:, self.selected_gene_indices]
-
-            # Compute test loss (similar to base class)
-            mse = (predicted_expression - y).pow(2)
-            if mask is not None:
-                valid = mask.sum(dim=1)
-                test_loss_per_batch = (mse * mask).sum(dim=1)
-                test_loss = (test_loss_per_batch / valid).nanmean()
-            else:
-                test_loss = mse.mean()
-
-            # Log test loss and PCC
-            self.log("test_loss", test_loss, prog_bar=True, logger=True, batch_size=y.shape[0], on_step=False, on_epoch=True)
-            test_pcc = self._compute_masked_pcc(predicted_expression, y, mask)
-            self.log("test_PCC", test_pcc, prog_bar=True, logger=True, batch_size=y.shape[0], on_step=False, on_epoch=True)
 
         # Convert predictions to numpy for storage (following base class pattern)
         if isinstance(predicted_expression, torch.Tensor):
