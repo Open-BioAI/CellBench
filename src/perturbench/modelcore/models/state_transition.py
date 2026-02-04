@@ -114,7 +114,7 @@ class StateTransitionPerturbationModel(PerturbationModel):
         decoder_config=dict(
             latent_dim=self.output_dim,
             gene_dim=self.gene_dim,
-            decoder_dropout=decoder_dropout,
+            dropout=decoder_dropout,  # LatentToGeneDecoder expects 'dropout', not 'decoder_dropout'
             residual_decoder=residual_decoder,
             hidden_dims=decoder_hidden_dims,
         )
@@ -665,8 +665,10 @@ class StateTransitionPerturbationModel(PerturbationModel):
                 pert_cell_counts_preds = self.gene_decoder(latent_preds)
                 if padded:
                     gene_targets = gene_targets.reshape(-1, self.cell_sentence_len, self.gene_decoder.gene_dim())
+                    pert_cell_counts_preds = pert_cell_counts_preds.reshape(-1, self.cell_sentence_len, self.gene_decoder.gene_dim())
                 else:
                     gene_targets = gene_targets.reshape(1, -1, self.gene_decoder.gene_dim())
+                    pert_cell_counts_preds = pert_cell_counts_preds.reshape(1, -1, self.gene_decoder.gene_dim())
 
                 decoder_loss = self.loss_fn(pert_cell_counts_preds, gene_targets).mean()
 
