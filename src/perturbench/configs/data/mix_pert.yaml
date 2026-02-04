@@ -1,16 +1,14 @@
-
-#你们改模型debug只需调整batch_size,其它的不用管
 defaults:
-  - transform: mix_pert_transform                        #加载transform配置
-  - splitter: null                                      #加载splitter配置
-  - evaluation: default                                 #加载evaluation配置
+- transform: mix_pert_transform                        #加载transform配置
+- splitter: null                                      #加载splitter配置
+- evaluation: default                                 #加载evaluation配置
 
 _target_: perturbench.data.modules.PertDataModule
 mask_type: cell
 data_path: ./data/all_cell_line_filterdrug.h5ad    #预处理好的anndata路径
 train_batch_size: 300                                   #训练批次大小
-val_batch_size: 300                                     #验证批次大小
-test_batch_size: 300                                    #测试批次大小
+val_batch_size: ${data.train_batch_size}                                     #验证批次大小
+test_batch_size: ${data.train_batch_size}                                    #测试批次大小
 gene_key: gene_pt                                       #基因扰动列名
 drug_key: drug_pt                                       #药物扰动列名
 env_key: env_pt                                         #环境扰动列名

@@ -733,10 +733,6 @@ class StateTransitionPerturbationModel(PerturbationModel):
         else:
             mask_2d = None
         
-        # Compute PCC (use mask if enabled)
-        train_pcc = self._compute_masked_pcc(pred_2d, target_2d, mask_2d)
-        self.log("train_PCC", train_pcc, prog_bar=True, logger=True, batch_size=B, on_step=True, on_epoch=True)
-
         return total_loss
 
     def validation_step(self, data_tuple:tuple[any,pd.DataFrame], batch_idx: int) -> None:
@@ -822,72 +818,8 @@ class StateTransitionPerturbationModel(PerturbationModel):
                 mask_2d = mask_2d.to(pred_2d.device)
         else:
             mask_2d = None
-        
-        # Compute PCC (use mask if enabled)
-        val_pcc = self._compute_masked_pcc(pred_2d, target_2d, mask_2d)
-        self.log("val_PCC", val_pcc, prog_bar=True, logger=True, batch_size=1, on_step=True, on_epoch=True)
 
         return {"loss": loss, "predictions": pred}
-
-    def test_step(self, data_tuple:tuple[any,pd.DataFrame], batch_idx: int) -> None:
-        """Test step: 计算 PCC 并将 per-cell 预测聚合为 per-observation 预测。"""
-        batch, obs_df = data_tuple
-
-        # 获取预测结果用于 PCC 计算（与其他模型一致）
-        predicted_expression = self.predict(batch)
-
-        # 获取 ground truth 并计算 PCC（与其他模型一致）
-        if isinstance(batch, dict):
-            y = batch.get('pert_cell_counts', None)
-        else:
-            y = getattr(batch, 'pert_cell_counts', None)
-
-        if y is not None and predicted_expression is not None:
-            # 确保预测结果在正确的设备上
-            device = y.device
-            if not isinstance(predicted_expression, torch.Tensor):
-                predicted_expression = torch.as_tensor(predicted_expression, device=device, dtype=y.dtype)
-            else:
-                predicted_expression = predicted_expression.to(device, non_blocking=True)
-
-            # 获取掩码
-            mask = self._get_mask(batch)
-            if mask is not None:
-                mask = mask.to(device, non_blocking=True)
-
-            # ---- 确保所有张量都是2D格式 [N, G] ----
-            pred_2d = self._ensure_2d(predicted_expression)
-            y_2d = self._ensure_2d(y)
-            mask_2d = self._ensure_2d(mask) if mask is not None else None
-
-            # 计算 test PCC（使用2D格式）
-            test_pcc = self._compute_masked_pcc(pred_2d, y_2d, mask_2d)
-            self.log("test_PCC", test_pcc, prog_bar=True, logger=True, batch_size=y_2d.shape[0], on_step=False, on_epoch=True)
-
-        # 进行 state_sm 特有的聚合
-        out_dict = self.predict_step(batch, padded=False, batch_idx=batch_idx)
-
-        pred_expr = out_dict.get("pert_cell_counts_preds", None)
-        if pred_expr is None:
-            pred_expr = out_dict.get("preds", None)
-
-        pred_expr_np = pred_expr.detach().cpu().numpy()
-        n_pred, n_gene = pred_expr_np.shape
-        n_obs = len(obs_df)
-
-        # 当前 state 配置下：一个 obs（条件）对应若干个 cell 的预测（例如 32 个），
-        # 因此这里将 [n_pred, G] 重塑并在 cell 维上做平均，得到 [n_obs, G]，
-        if n_obs == 0:
-            raise ValueError("obs_df has zero rows in test_step.")
-        if n_pred % n_obs != 0:
-            raise ValueError(
-                f"Prediction rows ({n_pred}) not an integer multiple of obs rows ({n_obs}); "
-                "cannot aggregate per-observation predictions."
-            )
-        factor = n_pred // n_obs  # 每个 obs 对应的 cell 数
-        pred_expr_np = pred_expr_np.reshape(n_obs, factor, n_gene).mean(axis=1)
-
-        self.preds_list.append((pred_expr_np, obs_df))
 
     def predict(self, batch):
 

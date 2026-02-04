@@ -307,7 +307,8 @@ class MixPertTransform(TransformBase):
         out['control_cell_counts'] = control_counts.float() if isinstance(control_counts, torch.Tensor) else torch.as_tensor(control_counts, dtype=torch.float32)
 
         # cell embedding
-        if self.use_cell_emb:
+        pert_cell_emb = example.get('pert_cell_emb', None)
+        if self.use_cell_emb and pert_cell_emb is not None:
             pert_emb = example['pert_cell_emb']
             control_emb = example['control_cell_emb']
             out['pert_cell_emb'] = pert_emb.float() if isinstance(pert_emb, torch.Tensor) else torch.as_tensor(pert_emb, dtype=torch.float32)

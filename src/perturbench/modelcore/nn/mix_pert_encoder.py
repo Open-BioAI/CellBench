@@ -153,14 +153,8 @@ class MixedPerturbationEncoder(nn.Module):
             dropout: float = 0.0,
     ) -> None:
         super().__init__()
-
-        # 缓存编码器存在性（避免 forward 中反复检查）
-        self._has_gene = self.gene_encoder is not None
-        self._has_drug = self.drug_encoder is not None
-        self._has_env = self.env_encoder is not None
-        self._has_crispr = self.crispr_encoder is not None
         
-        assert per_modality_embed_dim is not None and final_embed_dim is not None,\
+        assert per_modality_embed_dim is not None or final_embed_dim is not None,\
              "per_modality_embed_dim and final_embed_dim must be provided"
         if final_embed_dim is None:
             final_embed_dim = per_modality_embed_dim
@@ -179,6 +173,12 @@ class MixedPerturbationEncoder(nn.Module):
              if env_pert_dim > 1 else None
         self.crispr_encoder = MLP(crispr_pert_dim, self.per_modality_embed_dim, hidden_dims, dropout=dropout)\
              if crispr_pert_dim > 1 else None
+
+        # 缓存编码器存在性（避免 forward 中反复检查）
+        self._has_gene = self.gene_encoder is not None
+        self._has_drug = self.drug_encoder is not None
+        self._has_env = self.env_encoder is not None
+        self._has_crispr = self.crispr_encoder is not None
 
     def forward(self, batch) -> torch.Tensor:
         """

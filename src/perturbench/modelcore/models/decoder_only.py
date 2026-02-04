@@ -51,6 +51,7 @@ class DecoderOnly(PerturbationModel):
         softplus_output=True,
         use_covs: bool = False,  # Unified covariate usage parameter
         use_perturbations=True,
+        use_cell_emb: bool = False,
         use_mask: bool = False,  # Unified mask switch for training loss and evaluation
         lr: float | None = None,
         wd: float | None = None,
@@ -130,6 +131,7 @@ class DecoderOnly(PerturbationModel):
         self.softplus_output = softplus_output
         self.use_covs = use_covs
         self.use_perturbations = use_perturbations
+        self.use_cell_emb = use_cell_emb
 
     def _get_control_expression(self, batch: Batch) -> torch.Tensor:
         if self.use_cell_emb:

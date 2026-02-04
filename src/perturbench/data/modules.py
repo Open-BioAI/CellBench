@@ -29,8 +29,9 @@ class PertDataModule(L.LightningDataModule):
                  test_batch_size:int,
                  control_val: str,
                  cov_keys: List[str],
-                 transform: DictConfig,
-                 splitter: DictConfig|None = None,
+                 mask_type: str='cell',
+                 transform: DictConfig|None=None,
+                 splitter: DictConfig|None = None, 
                  pert_key: str|None=None,
                  gene_key: str | None=None,
                  drug_key:str|None=None,
@@ -225,11 +226,13 @@ class PertDataModule(L.LightningDataModule):
         self.raw_counts_key = raw_counts_key
         self.cov_avg_sampling = cov_avg_sampling
         self.sample_mode = sample_mode
+        self.mask_type = mask_type
         # Only use cell_set_len when sample_mode is "set"
         if sample_mode == "set":
             self.cell_set_len = cell_set_len if cell_set_len is not None else 128  # Default to 128 for set mode
         else:
             self.cell_set_len = None  # Force None for cell mode
+
         self.add_keys = add_keys
         self.train_num_workers = train_num_workers
         self.val_num_workers = val_num_workers
@@ -315,7 +318,7 @@ class PertDataModule(L.LightningDataModule):
             split_dict['val'] = split == 'val'
             split_dict['test'] = split == 'test'
 
-
+        self.generate_mask_dict()
 
         '''全转化为dense格式并确保float32类型'''
         self.adata.X = self.to_dense(self.adata.X).astype(np.float32)
@@ -375,6 +378,8 @@ class PertDataModule(L.LightningDataModule):
             cell_set_len=self.cell_set_len,
             add_keys=self.add_keys,
             predict_controls=self.predict_controls,
+            cellclass_mask_dict=self.cellclass_mask_dict,
+            mask_type=self.mask_type,
             **kwargs
         )
 
@@ -393,6 +398,8 @@ class PertDataModule(L.LightningDataModule):
             raw_counts_key=self.raw_counts_key,
             cell_set_len=self.cell_set_len,
             add_keys=self.add_keys,
+            cellclass_mask_dict=self.cellclass_mask_dict,
+            mask_type=self.mask_type,
             **kwargs
         )
 
@@ -411,6 +418,8 @@ class PertDataModule(L.LightningDataModule):
             raw_counts_key=self.raw_counts_key,
             cell_set_len=self.cell_set_len,
             add_keys=self.add_keys,
+            cellclass_mask_dict=self.cellclass_mask_dict,
+            mask_type=self.mask_type,
             **kwargs
         )
 
@@ -432,7 +441,7 @@ class PertDataModule(L.LightningDataModule):
             num_workers=self.train_num_workers,
             collate_fn=self.train_collect_fn,
             drop_last=True,
-            shuffle=True,
+            shuffle=False,
         )
     def val_dataloader(self) -> DataLoader | None:
 
@@ -481,6 +490,10 @@ class PertDataModule(L.LightningDataModule):
         self.adata.obs['cellclass'] =self.merge_cols(self.adata.obs, self.result_avg_keys)
         mask_dict = {}
         for cellclass_key in self.adata.obs['cellclass'].unique():
-            mask_dict[cellclass_key] = self.adata.X[self.adata.obs['cellclass']==cellclass_key].sum(axis=0).toarray()!=0
-        self.mask_dict = mask_dict
+            subset_data = self.adata.X[self.adata.obs['cellclass']==cellclass_key]
+            # 确保是dense格式再求sum
+            if issparse(subset_data):
+                subset_data = subset_data.toarray()
+            mask_dict[cellclass_key] = np.asarray(subset_data).sum(axis=0).flatten() != 0
+        self.cellclass_mask_dict = mask_dict
 

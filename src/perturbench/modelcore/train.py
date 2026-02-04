@@ -75,6 +75,10 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--data.val_num_workers", dest="data_val_num_workers", type=int)
     parser.add_argument("--data.test_num_workers", dest="data_test_num_workers", type=int)
     parser.add_argument("--data.embedding_key", dest="data_embedding_key", type=str)
+    parser.add_argument("--data.cov_keys", dest="data_cov_keys", type=str)
+    parser.add_argument("--data.result_avg_keys", dest="data_result_avg_keys", type=str)
+    parser.add_argument("--data.sample_mode", dest="data_sample_mode", type=str)
+    parser.add_argument("--data.cell_set_len", dest="data_cell_set_len", type=int)
     parser.add_argument(
         "--data.transform.use_covs",
         dest="data_transform_use_covs",
@@ -85,9 +89,16 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         dest="data_transform_drug_map_path",
         type=str,
     )
+    parser.add_argument(
+        "--data.transform.gene_map_path",
+        dest="data_transform_gene_map_path",
+        type=str,
+    )
 
     parser.add_argument("--model.use_mask", dest="model_use_mask", type=str)
     parser.add_argument("--model.use_cell_emb", dest="model_use_cell_emb", type=str)
+    parser.add_argument("--model.diffusion_steps", dest="model_diffusion_steps", type=int)
+    parser.add_argument("--model.n_selected_genes", dest="model_n_selected_genes", type=int)
     parser.add_argument("--data.train_batch_size", dest="data_train_batch_size", type=int)
     parser.add_argument("--model.dropout", dest="model_dropout", type=float)
     parser.add_argument("--model.lr", dest="model_lr", type=float)
@@ -172,10 +183,17 @@ def _apply_cli_overrides(cfg: DictConfig, args: argparse.Namespace | None) -> Di
         "data_val_num_workers": "data.val_num_workers",
         "data_test_num_workers": "data.test_num_workers",
         "data_embedding_key": "data.embedding_key",
+        "data_cov_keys": "data.cov_keys",
+        "data_result_avg_keys": "data.result_avg_keys",
+        "data_sample_mode": "data.sample_mode",
+        "data_cell_set_len": "data.cell_set_len",
         "data_transform_use_covs": "data.transform.use_covs",
         "data_transform_drug_map_path": "data.transform.drug_map_path",
+        "data_transform_gene_map_path": "data.transform.gene_map_path",
         "model_use_mask": "model.use_mask",
         "model_use_cell_emb": "model.use_cell_emb",
+        "model_diffusion_steps": "model.diffusion_steps",
+        "model_n_selected_genes": "model.n_selected_genes",
         "data_train_batch_size": "data.train_batch_size",
         "model_dropout": "model.dropout",
         "model_lr": "model.lr",
@@ -208,6 +226,21 @@ def _apply_cli_overrides(cfg: DictConfig, args: argparse.Namespace | None) -> Di
             value = _str2bool(value)
             if value is None:
                 continue
+        
+        # Handle list-type parameters (e.g., [split_category])
+        # If value is a string that looks like a list, parse it
+        if key in {"data.cov_keys", "data.result_avg_keys"}:
+            if isinstance(value, str):
+                # Remove brackets and split by comma
+                value = value.strip()
+                if value.startswith('[') and value.endswith(']'):
+                    value = value[1:-1].strip()
+                # Split by comma and strip whitespace
+                if value:
+                    value = [item.strip().strip("'\"") for item in value.split(',') if item.strip()]
+                else:
+                    value = []
+        
         OmegaConf.update(cfg, key, value, merge=False)
 
     # Allow dynamic batch_size adjustment for all models (including state_sm)
@@ -303,12 +336,20 @@ def train(runtime_context: dict):
     is_state_transition = "StateTransitionPerturbationModel" in model_target or "state_transition" in model_target.lower()
     
     # Set sample_mode: "set" for state_transition models, "cell" for others
-    sample_mode = "set" if is_state_transition else "cell"
-    OmegaConf.update(cfg, "data.sample_mode", sample_mode, merge=False)
+    # Only auto-set if not already specified via CLI/config
+    if cfg.data.get("sample_mode") is None:
+        sample_mode = "set" if is_state_transition else "cell"
+        OmegaConf.update(cfg, "data.sample_mode", sample_mode, merge=False)
+    else:
+        sample_mode = cfg.data.get("sample_mode")
     
     # Set cell_set_len: 128 (or from model config) for state_transition, None for others
-    cell_set_len = cfg.model.get("cell_set_len", 128) if is_state_transition else None
-    OmegaConf.update(cfg, "data.cell_set_len", cell_set_len, merge=False)
+    # Only auto-set if not already specified via CLI/config
+    if cfg.data.get("cell_set_len") is None:
+        cell_set_len = cfg.model.get("cell_set_len", 128) if is_state_transition else None
+        OmegaConf.update(cfg, "data.cell_set_len", cell_set_len, merge=False)
+    else:
+        cell_set_len = cfg.data.get("cell_set_len")
     
     log.info(f"Model {model_target}: sample_mode={sample_mode}, cell_set_len={cell_set_len}")
 

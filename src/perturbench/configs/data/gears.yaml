@@ -16,7 +16,9 @@ embedding_key: null #None                               #若不为null，训练�
 cov_avg_sampling: False                                 #若为true，在训练时对每种协变量抽取cells比例相同
 add_keys: null                                          #补充还想用到的obs列
 predict_controls: False                               #模型可以预测对照组
-sharing_controls: True
+sharing_controls: False
+sample_mode: cell
+cell_set_len: null
 train_num_workers: 8  # 设为0避免 AF_UNIX path too long 错误
 val_num_workers: 8
 test_num_workers: 8

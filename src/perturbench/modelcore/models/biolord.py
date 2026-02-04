@@ -106,8 +106,9 @@ class BiolordStar(PerturbationModel):
         self.pert_encoder = MixedPerturbationEncoder(gene_pert_dim=self.gene_pert_dim,
                                                      drug_pert_dim=self.drug_pert_dim,
                                                      env_pert_dim=self.env_pert_dim,
-                                                     crisper_pert_dim=self.crisper_pert_dim,
+                                                     crispr_pert_dim=self.crispr_pert_dim,
                                                      hidden_dims=[latent_dim]*(n_layers-1) if n_layers>1 else [],
+                                                     per_modality_embed_dim=latent_dim,
                                                      final_embed_dim=latent_dim)
 
         self.penalty_weight = penalty_weight

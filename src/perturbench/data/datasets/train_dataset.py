@@ -40,7 +40,6 @@ class scTrainDataset(Dataset):
             cell_set_len: int | None = None,
             add_keys: List[str] | None = None,
             predict_controls: bool = False,
-            expression_mask: np.ndarray | None = None,
             cellclass_mask_dict: Dict[str, np.ndarray] | None = None,
             mask_type: str|None=None,
             **kwargs
