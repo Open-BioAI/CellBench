@@ -476,7 +476,9 @@ class CPA(PerturbationModel):
         )
 
         if self.start_adv_training:
+            # 对抗训练阶段：交替更新生成器和对抗器
             if batch_idx % self.adv_steps == 0:
+                # 更新生成器（autoencoder 部分），使用 total_loss（始终有梯度）
                 self.toggle_optimizer(optimizer_generative)
                 optimizer_generative.zero_grad()
                 self.manual_backward(total_loss)
@@ -484,11 +486,15 @@ class CPA(PerturbationModel):
                 self.untoggle_optimizer(optimizer_generative)
 
             else:
-                self.toggle_optimizer(optimizer_adversary)
-                optimizer_adversary.zero_grad()
-                self.manual_backward(adv_loss)
-                optimizer_adversary.step()
-                self.untoggle_optimizer(optimizer_adversary)
+                # 只有在 adv_loss 确实参与了计算图、需要梯度时才更新对抗器
+                # 当前版本中 adv_loss 可能是 zeros_like(recon_loss) 且不需要梯度，
+                # 这时对它调用 backward 会报 “does not require grad” 的错误。
+                if adv_loss.requires_grad:
+                    self.toggle_optimizer(optimizer_adversary)
+                    optimizer_adversary.zero_grad()
+                    self.manual_backward(adv_loss)
+                    optimizer_adversary.step()
+                    self.untoggle_optimizer(optimizer_adversary)
 
         else:
             gen_loss = losses["recon_loss"] + self.kl_weight * losses["kl_loss"]
