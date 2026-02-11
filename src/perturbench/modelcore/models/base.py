@@ -985,15 +985,19 @@ class PerturbationModel(L.LightningModule, ABC):
                 print(f"Evaluation finished. Results saved to {csv_path}")
 
             # 2.5 记录到 Weights & Biases（如果启用）
-            # 将所有 cellclass 的指标合并求平均后记录
+            # 先记录每个 cellclass 的指标，再记录所有 cellclass 的平均指标
             if summary_metrics_dict:
+                # 2.5.1 记录每个 cellclass 的独立指标（带 cellclass 前缀）
+                for cc, cc_metrics in summary_metrics_dict.items():
+                    cc_prefix = str(cc).replace('/', '_')
+                    self._log_to_wandb({f"{cc_prefix}/{k}": v for k, v in cc_metrics.items()})
+
+                # 2.5.2 计算并记录所有 cellclass 的平均指标
                 avg_dict = {}
                 for cc_metrics in summary_metrics_dict.values():
                     for k, v in cc_metrics.items():
-                        # 将各指标值收集到列表中
                         avg_dict.setdefault(k, []).append(float(v) if hasattr(v, '__float__') else v)
-                # 计算平均值并记录到 wandb
-                self._log_to_wandb({k: np.mean(v) for k, v in avg_dict.items()})
+                self._log_to_wandb({f"mean/{k}": np.mean(v) for k, v in avg_dict.items()})
 
         # ========== 步骤3：同步评估结果到所有进程 ==========
         # 在分布式场景下，确保所有进程都能访问 summary_metrics
