@@ -21,7 +21,7 @@ uncertainty_reg: 1
 direction_lambda: 1e-1
 
 use_cell_emb: false
-use_mask: true  # Enable expression mask for weighted loss calculation
+use_mask: false  # Enable expression mask for weighted loss calculation
 # use_covs is now auto-configured based on data.transform.use_covs
 # use_covs: False
 

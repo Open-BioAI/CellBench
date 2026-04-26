@@ -222,8 +222,15 @@ class PertDataModule(L.LightningDataModule):
         self.cov_keys = cov_keys
         self.crispr_key=crispr_key
         self.perturbation_combination_delimiter = perturbation_combination_delimiter
-        self.embedding_key = embedding_key
-        self.raw_counts_key = raw_counts_key
+        # Guard against string "None"/"null" from CLI/Hydra serialization
+        if embedding_key is None or str(embedding_key).lower() in ('none', 'null', ''):
+            self.embedding_key = None
+        else:
+            self.embedding_key = embedding_key
+        if raw_counts_key is None or str(raw_counts_key).lower() in ('none', 'null', ''):
+            self.raw_counts_key = None
+        else:
+            self.raw_counts_key = raw_counts_key
         self.cov_avg_sampling = cov_avg_sampling
         self.sample_mode = sample_mode
         self.mask_type = mask_type
@@ -470,6 +477,9 @@ class PertDataModule(L.LightningDataModule):
         else:
             return X
     def merge_cols(self, obs_df, cols):
+        # cols 为空的情况：返回全空字符串列
+        if cols is None or (isinstance(cols, list) and len(cols) == 0):
+            return np.full(len(obs_df), '', dtype=object)
         # 处理第一列，先转换为字符串类型避免 Categorical 问题
         first_col = obs_df[cols[0]]
         # 如果是 Categorical，先转换为字符串
