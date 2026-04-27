@@ -27,8 +27,8 @@ class MixPertTransform(TransformBase):
                  use_covs=False,
                  use_cell_emb=False,
                  comb_delim='+',
-                 max_gene_perts=3,  # 最大基因扰动数
-                 max_drug_perts=3,  # 最大药物扰动数
+                 max_gene_perts=3,  # Maximum number of gene perturbations
+                 max_drug_perts=3,  # Maximum number of drug perturbations
                  ):
         super().__init__(obs_df)
         self.gene_key = gene_key
@@ -63,24 +63,24 @@ class MixPertTransform(TransformBase):
         self.get_perts_dim()
         self.add_null_tokens()
 
-        # 计算总扰动数量
+        # Calculate total number of perturbations
         self.n_perts = self.calculate_total_perturbations()
 
         if use_covs:
             self.get_cov_maps()
             self.get_cov_dims()
-            # 预缓存 cov null embeddings
+            # Pre-cache cov null embeddings
             self._cov_null_embs = {
                 cov_key: self.cov_maps[cov_key][self.null_token]
                 for cov_key in self.cov_keys
             }
         else:
-            # 即使不使用协变量，也需要初始化 cov_dims 属性
+            # Even if not using covariates, need to initialize cov_dims attribute
             self.cov_dims = {}
             self.n_total_covs = 0
             self._cov_null_embs = {}
 
-        # 确保 n_total_covs 总是被设置（即使 use_covs=False，我们也需要为模型提供这个值）
+        # Ensure n_total_covs is always set (even if use_covs=False, we need to provide this value for the model)
         if not hasattr(self, 'n_total_covs'):
             if use_covs and hasattr(self, 'cov_maps') and self.cov_maps is not None:
                 n_total_covs = 0
@@ -100,7 +100,7 @@ class MixPertTransform(TransformBase):
         if self.null_token not in self.crispr_map.keys():
             self.crispr_map[self.null_token] = torch.zeros(self.crispr_dim, dtype=torch.float32)
         
-        # 预缓存 null embedding（加速 __call__ 中的查找）
+        # Pre-cache null embeddings (speed up lookup in __call__)
         self._gene_null_emb = self.gene_map[self.null_token]
         self._drug_null_emb = self.drug_map[self.null_token]
         self._env_null_emb = self.env_map[self.null_token]
@@ -121,7 +121,7 @@ class MixPertTransform(TransformBase):
     def get_cov_maps(self):
         if self.cov_maps_path is not None and os.path.exists(self.cov_maps_path) and not self.regenerate_cov_maps:
             self.cov_maps = torch.load(self.cov_maps_path, weights_only=False)
-            # 确保每个 cov_map 都包含 null_token
+            # Ensure each cov_map contains null_token
             for cov_key, cov_map in self.cov_maps.items():
                 if self.null_token not in cov_map:
                     if len(cov_map) > 0:
@@ -139,18 +139,18 @@ class MixPertTransform(TransformBase):
             cov_maps = {}
             for cov_key in self.cov_keys:
                 cov_map = self.get_onehot_dict(cov_key)
-                # 确保 null_token 存在于 cov_map 中
+                # Ensure null_token exists in cov_map
                 if self.null_token not in cov_map:
-                    # 获取 one-hot 向量的长度（从第一个值获取）
+                    # Get one-hot vector length (from first value)
                     if len(cov_map) > 0:
                         first_val = next(iter(cov_map.values()))
                         onehot_dim = len(first_val)
                         cov_map[self.null_token] = torch.zeros(onehot_dim, dtype=torch.float32)
                     else:
-                        # 如果 cov_map 为空，创建一个包含 null_token 的映射
+                        # If cov_map is empty, create a mapping with null_token
                         cov_map[self.null_token] = torch.zeros(1, dtype=torch.float32)
                 cov_maps[cov_key] = cov_map
-            self.cov_maps = cov_maps  # 先赋值给 self.cov_maps
+            self.cov_maps = cov_maps  # First assign to self.cov_maps
             # Calculate n_total_covs for new cov_maps
             n_total_covs = 0
             for cov_map in self.cov_maps.values():
@@ -162,7 +162,7 @@ class MixPertTransform(TransformBase):
         for cov_key in self.cov_keys:
             cov_map = self.cov_maps[cov_key]
             first_val = next(iter(cov_map.values()))
-            cov_dims[cov_key] = len(first_val)  # 存维度值而非 tensor
+            cov_dims[cov_key] = len(first_val)  # Store dimension value instead of tensor
         self.cov_dims = cov_dims
 
     def get_drug_map(self):
@@ -216,11 +216,11 @@ class MixPertTransform(TransformBase):
         self.crispr_pert_dim = len(self.crispr_map[key])
 
     def _safe_lookup(self, mapping, key, null_emb):
-        """快速查找，使用预缓存的 null embedding"""
+        """Fast lookup using pre-cached null embedding"""
         return mapping.get(key, null_emb)
 
     def __call__(self, example):
-        # 使用局部变量加速属性访问
+        # Use local variables to speed up attribute access
         gene_key = self.gene_key
         drug_key = self.drug_key
         env_key = self.env_key
@@ -228,7 +228,7 @@ class MixPertTransform(TransformBase):
         comb_delim = self.comb_delim
         null_token = self.null_token
         
-        # 预取 null embeddings（避免重复查找）
+        # Pre-fetch null embeddings (avoid repeated lookups)
         gene_null = self._gene_null_emb
         drug_null = self._drug_null_emb
         env_null = self._env_null_emb
@@ -236,32 +236,32 @@ class MixPertTransform(TransformBase):
         
         out = {}
 
-        # 协变量处理
+        # Covariate processing
         if self.use_covs:
             cov_maps = self.cov_maps
             cov_null_embs = self._cov_null_embs
             for cov_key in self.cov_keys:
                 out[cov_key] = cov_maps[cov_key].get(example[cov_key], cov_null_embs[cov_key])
 
-        # 字符串分割（无法避免，但用局部变量加速）
+        # String splitting (unavoidable, but speed up with local variables)
         gene_perts = example[gene_key].split(comb_delim)
         drug_perts = example[drug_key].split(comb_delim)
         env_perts = example[env_key].split(comb_delim)
 
-        # CRISPR 处理（简化逻辑）
+        # CRISPR processing (simplified logic)
         raw_crispr = example.get(crispr_key)
         if raw_crispr is None or raw_crispr == '' or (isinstance(raw_crispr, float) and raw_crispr != raw_crispr):
             crispr_type = null_token
         else:
             crispr_type = str(raw_crispr) if str(raw_crispr).lower() != "nan" else null_token
 
-        # pert_names（直接赋值，避免字典合并）
+        # pert_names (direct assignment, avoid dictionary merging)
         if self.keep_pert_names:
             out['gene_names'] = gene_perts
             out['drug_names'] = drug_perts
             out['env_names'] = env_perts
 
-        # gene embedding（padded tensor 格式，适合多进程）
+        # gene embedding (padded tensor format, suitable for multiprocessing)
         if self.gene_pert_dim > 1:
             gene_map = self.gene_map
             max_gene = self.max_gene_perts
@@ -272,7 +272,7 @@ class MixPertTransform(TransformBase):
             out['gene_pert'] = gene_tensor
             out['gene_pert_len'] = n_gene
         
-        # drug embedding（padded tensor 格式）
+        # drug embedding (padded tensor format)
         if self.drug_pert_dim > 1:
             drug_map = self.drug_map
             max_drug = self.max_drug_perts
@@ -283,13 +283,13 @@ class MixPertTransform(TransformBase):
             out['drug_pert'] = drug_tensor
             out['drug_pert_len'] = n_drug
         
-        # env embedding（优化：预分配结果）
+        # env embedding (optimization: pre-allocate result)
         if self.env_pert_dim > 1:
             env_map = self.env_map
             if len(env_perts) == 1:
                 out['env_pert'] = env_map.get(env_perts[0], env_null)
             else:
-                # 手动求和，避免 torch.stack 的开销
+                # Manual summation, avoid torch.stack overhead
                 result = env_map.get(env_perts[0], env_null).clone()
                 for ep in env_perts[1:]:
                     result += env_map.get(ep, env_null)
@@ -299,7 +299,7 @@ class MixPertTransform(TransformBase):
         if self.crispr_pert_dim > 1:
             out['crispr_pert'] = self.crispr_map.get(crispr_type, crispr_null)
 
-        # counts 处理（使用 torch.as_tensor 避免不必要的拷贝）
+        # counts processing (use torch.as_tensor to avoid unnecessary copies)
         pert_counts = example['pert_cell_counts']
         control_counts = example['control_cell_counts']
         

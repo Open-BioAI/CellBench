@@ -101,7 +101,7 @@ class StateTransitionPerturbationModel(PerturbationModel):
         self.input_dim = self.embedding_dim if self.use_cell_emb else self.n_genes
         self.output_dim = self.embedding_dim if self.use_cell_emb else self.n_genes
         if getattr(self, "use_mix_pert", False):
-            # MixPertTransform 没有单一的 pert_dim，后续直接用 gene/drug/env encoder
+            # MixPertTransform does not have a single pert_dim; use gene/drug/env encoders directly later
             self.pert_dim = self.gene_pert_dim + self.drug_pert_dim + self.env_pert_dim
         else:
             self.pert_dim = datamodule.train_dataset.transform.pert_dim
@@ -518,11 +518,11 @@ class StateTransitionPerturbationModel(PerturbationModel):
         out = transformer_output
         confidence_pred = None
 
-        # 1) 先剥离 confidence token（如果有）
+        # 1) 1) Strip the confidence token first (if present)
         if self.confidence_token is not None:
             out, confidence_pred = self.confidence_token.extract_confidence_prediction(out)
 
-        # 2) 用指针 start 依次跳过 batch_token / cov_token
+        # 2) 2) Use pointer start to skip batch_token / cov_token in sequence
         start = 0
         if self.use_batch_token and self.batch_token is not None:
             self._batch_token_cache = out[:, :1, :]
@@ -530,12 +530,12 @@ class StateTransitionPerturbationModel(PerturbationModel):
         else:
             self._batch_token_cache = None
 
-        # cov token 只有真的插入了才跳过
+        # Skip cov token only if it was actually inserted
         if getattr(self, "_inserted_cov_token", False):
             start += 1
 
-        # 3) 剩下都是 cell tokens
-        res_pred = out[:, start:, :]   # [B, S, H] (保证正确)
+        # 3) 3) The remaining tokens are all cell tokens
+        res_pred = out[:, start:, :]   # [B, S, H] (ensures correctness)
 
         # add to basal if predicting residual
         if self.predict_residual and self.gene_decoder is None:

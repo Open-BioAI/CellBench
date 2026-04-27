@@ -221,11 +221,11 @@ class SparseAdditiveVAE(PerturbationModel):
             m = gumbel_softmax_bernoulli(m_probs)
 
         if self.pert_encoder:
-            # mix_pert：直接用 MixedPerturbationEncoder 得到扰动嵌入
+            # mix_pert: directly obtain perturbation embedding with MixedPerturbationEncoder
             z_p = self.pert_encoder(batch)  # [B, latent_dim]
             e_mu = e_log_var = None
         else:
-            # 原有多热 perturbation 流程
+            # Original multi-hot perturbation workflow
             perturbations_per_cell = perturbation.sum(axis=1)
             # Get indices where perturbations are active (1s)
             z_p_index_batch, z_p_index_pert = torch.where(perturbation.bool())
@@ -296,7 +296,7 @@ class SparseAdditiveVAE(PerturbationModel):
         log_qz = q_z.log_prob(z_basal).sum(axis=-1)
         log_pz = p_z.log_prob(z_basal).sum(axis=-1)
 
-        # 先算重构损失
+        # Compute reconstruction loss first
         if mask is not None:
             # Masked reconstruction loss (MSE)
             import torch.nn.functional as F
@@ -309,7 +309,7 @@ class SparseAdditiveVAE(PerturbationModel):
                 predictions, observed_perturbed_expression
             )
 
-        # 再算 KL 分支
+        # Then compute the KL branch
         if self.pert_encoder:
             log_qe_pe = torch.zeros(batch_size, device=self.device)
             log_qm_pm = torch.zeros(1, device=self.device)

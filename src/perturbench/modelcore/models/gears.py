@@ -339,7 +339,7 @@ class GEARS(PerturbationModel):
     def validation_step(self, data_tuple, batch_idx):
         batch,_=data_tuple
         pred=self.predict(batch)
-        # 兼容 dict 和 Batch 对象
+        # Compatible with both dict and Batch objects
         y = batch['pert_cell_counts'] if isinstance(batch, dict) else batch.pert_cell_counts
 
         # Get expression mask using unified method from base class

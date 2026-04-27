@@ -14,7 +14,7 @@ import hydra
 import scanpy as sc
 import pandas as pd
 import torch
-import random  # Python random 比 np.random 快
+import random  # Python random is faster than np.random
 from scipy.sparse import issparse
 
 
@@ -57,7 +57,7 @@ class scInferenceDataset(Dataset):
 
         self.use_mix_pert = use_mix_pert
 
-        # ====== 1) 预取 obs-level 信息（避免重复 pandas 操作） ======
+        # ====== 1) Prefetch obs-level information (avoid repeated pandas operations) ======
         pert_obs = pert_adata.obs.copy()
         ctrl_obs = control_adata.obs.copy()
 
@@ -70,24 +70,24 @@ class scInferenceDataset(Dataset):
         self.pert_obs = pert_obs
         self.control_obs = ctrl_obs
 
-        # ====== 2) 预构建控制组索引映射 ======
-        # 使用整数索引而非字符串索引（更快）
+        # ====== 2) Prebuild control group index mapping ======
+        # Use integer indices instead of string indices (faster)
         ctrl_cov_arr = ctrl_obs["cov_merged"].to_numpy()
         self.ctrl_group_map = {}
         for i, cov in enumerate(ctrl_cov_arr):
             self.ctrl_group_map.setdefault(cov, []).append(i)
-        # 转为 numpy 数组（加速 random.choice）
+        # Convert to numpy array (speed up random.choice)
         self.ctrl_group_map = {k: np.array(v, dtype=np.int64) for k, v in self.ctrl_group_map.items()}
-        # 保存所有 control 索引作为 fallback
+        # Save all control indices as fallback
         self.all_ctrl_idxs = np.arange(len(ctrl_obs), dtype=np.int64)
 
-        # ====== 3) 把矩阵一次性取出为 numpy，确保密集 + float32 + 连续 ======
+        # ====== 3) Extract matrix to numpy at once, ensure dense + float32 + contiguous ======
         X_pert = pert_adata.X
         X_ctrl = control_adata.X
         self.pert_X = X_pert.toarray() if issparse(X_pert) else np.asarray(X_pert)
         self.ctrl_X = X_ctrl.toarray() if issparse(X_ctrl) else np.asarray(X_ctrl)
         
-        # 转为 float32 连续数组（加速 tensor 转换）
+        # Convert to float32 contiguous array (speed up tensor conversion)
         if self.pert_X.dtype != np.float32:
             self.pert_X = self.pert_X.astype(np.float32)
         if self.ctrl_X.dtype != np.float32:
@@ -95,7 +95,7 @@ class scInferenceDataset(Dataset):
         self.pert_X = np.ascontiguousarray(self.pert_X)
         self.ctrl_X = np.ascontiguousarray(self.ctrl_X)
 
-        # mask 处理
+        # Mask processing
         if self.mask_type == 'cell':
             self.pert_expression_mask = np.ascontiguousarray((self.pert_X > 0).astype(np.float32))
         elif self.mask_type is not None and cellclass_mask_dict is not None:
@@ -104,7 +104,7 @@ class scInferenceDataset(Dataset):
         else:
             self.pert_expression_mask = None
 
-        # embedding 转为 float32 连续数组
+        # Convert embedding to float32 contiguous array
         if embedding_key:
             self.pert_emb = np.ascontiguousarray(pert_adata.obsm[embedding_key], dtype=np.float32)
             self.ctrl_emb = np.ascontiguousarray(control_adata.obsm[embedding_key], dtype=np.float32)
@@ -117,24 +117,24 @@ class scInferenceDataset(Dataset):
         else:
             self.pert_raw = self.ctrl_raw = None
 
-        # 整数索引映射（不需要字符串映射了）
+        # Integer index mapping (no need for string mapping anymore)
         self.pert_index_map = {name: i for i, name in enumerate(pert_obs.index)}
         self.ctrl_index_map = {name: i for i, name in enumerate(ctrl_obs.index)}
 
-        # ====== 初始化 transform ======
+        # ====== Initialize transform ======
         self.transform = transform(obs_df=pert_obs.copy())
 
-        # ====== 构建 chunks ======
+        # ====== Build chunks ======
         if cell_set_len:
             self.chunks = self.build_sets()
         else:
             self.chunks = self.build_singles()
 
     # ----------------------------------------------------------------------
-    # 快速打包表达信息（零拷贝版）
+    # Fast packaging of expression information (zero-copy version)
     # ----------------------------------------------------------------------
     def pack_expr(self, pert_i, ctrl_i):
-        """使用 torch.from_numpy 实现零拷贝，数据已在 __init__ 中转为 float32 连续数组"""
+        """Use torch.from_numpy to achieve zero copy, data has been converted to float32 contiguous array in __init__"""
         out = {
             "pert_cell_counts": torch.from_numpy(self.pert_X[pert_i]),
             "control_cell_counts": torch.from_numpy(self.ctrl_X[ctrl_i]),
@@ -156,14 +156,14 @@ class scInferenceDataset(Dataset):
 
     # ----------------------------------------------------------------------
     def build_singles(self):
-        """优化版：预提取所有列到 numpy，避免循环内 pandas 操作"""
+        """Optimized version: pre-extract all columns to numpy, avoid pandas operations in loop"""
         chunks = []
         n = len(self.pert_obs)
 
-        # 一次性拿所有 meta 信息为 numpy 数组
+        # Get all meta information as numpy arrays at once
         pert_cov = self.pert_obs["cov_merged"].to_numpy()
         
-        # 预提取 cov 列
+        # Pre-extract cov columns
         cov_arrays = {c: self.pert_obs[c].to_numpy() for c in self.cov_keys}
         
         if self.use_mix_pert:
@@ -178,17 +178,17 @@ class scInferenceDataset(Dataset):
             k: self.pert_obs[k].to_numpy() for k in (self.add_keys or [])
         }
 
-        # 预缓存 transform
+        # Pre-cache transform
         transform = self.transform
         pert_obs = self.pert_obs
 
         for i in range(n):
             cov = pert_cov[i]
             ctrl_arr = self.ctrl_group_map.get(cov, self.all_ctrl_idxs)
-            # 使用 Python random（更快）
+            # Use Python random (faster)
             ctrl_i = ctrl_arr[random.randint(0, len(ctrl_arr) - 1)]
 
-            # 使用预提取的 numpy 数组（避免 pandas iloc）
+            # Use pre-extracted numpy arrays (avoid pandas iloc)
             meta = {c: cov_arrays[c][i] for c in self.cov_keys}
             if self.use_mix_pert:
                 meta[self.gene_key] = gene_pert[i]
@@ -207,7 +207,7 @@ class scInferenceDataset(Dataset):
 
     # ----------------------------------------------------------------------
     def build_sets(self):
-        """优化版：减少循环内计算"""
+        """Optimized version: reduce calculations in loop"""
         chunks = []
         merge_delim = self.merge_delim
         
@@ -223,10 +223,10 @@ class scInferenceDataset(Dataset):
         unique_groups = np.unique(obs_merged)
         n_cov_keys = len(self.cov_keys)
         
-        # 预提取 add_keys 数组
+        # Pre-extract add_keys arrays
         add_keys_arrays = {k: self.pert_obs[k].to_numpy() for k in (self.add_keys or [])}
         
-        # 预缓存
+        # Pre-cache
         transform = self.transform
         pert_obs = self.pert_obs
         cell_set_len = self.cell_set_len
@@ -261,13 +261,13 @@ class scInferenceDataset(Dataset):
                 sub = idxs[start:start + cell_set_len]
                 sub_n = len(sub)
 
-                # 直接使用整数索引（ctrl_idxs 已经是整数数组）
+                # Directly use integer indices (ctrl_idxs is already an integer array)
                 ctrl_sample = np.random.choice(ctrl_idxs, size=sub_n, replace=(n_ctrl < sub_n))
 
-                # pack batch（ctrl_sample 已经是整数索引）
+                # Pack batch (ctrl_sample is already an integer index)
                 out = self.pack_expr(sub, ctrl_sample)
 
-                # add_keys（使用预提取的数组）
+                # add_keys (use pre-extracted arrays)
                 for k in add_keys_arrays:
                     out[k] = add_keys_arrays[k][sub]
 

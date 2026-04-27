@@ -1,5 +1,5 @@
 project: perturbench
-name: agent_0126
+name: mcfarland_zeroshot_unseencell(state_sm)
 method: grid
 
 metric:
@@ -7,13 +7,13 @@ metric:
   name: val_loss_epoch
 
 parameters:
-  # 固定项
+  # Fixed settings
   data:
     value: mix_pert
   # data.task:
   #   value: srivatsantrapnell2020_sciplex3
   data.data_path:
-    values: [/fs-computility-new/upzd_share/maoxinjie/AIVC/mxj/perturbench-main/data/Srivatsan2020_sciplex3_unseencell_hvgs.h5ad, /fs-computility-new/upzd_share/maoxinjie/AIVC/mxj/perturbench-main/data/Norman2019_singleperts_unseenperts.h5ad]
+    values: [/fs-computility-new/upzd_share/maoxinjie/AIVC/mxj/perturbench-main/tasks/unseen_perts/ReplogleWeissman2022_K562_stack_hvg_split.h5ad]
 
   train:
     value: true
@@ -33,20 +33,38 @@ parameters:
     value: 64
   data.test_batch_size:
     value: 64
-  data.transform.use_covs:
-    value: true
+  data.train_num_workers:
+    value: 0  # Set to 0 to avoid AF_UNIX path too long errors
+  data.val_num_workers:
+    value: 0
+  data.test_num_workers:
+    value: 0
+
+  data.transform.gene_map_path:
+    value: /fs-computility-new/upzd_share/maoxinjie/AIVC/mxj/perturbench-main/ESM2_pert_features.pt
+
+  data.embedding_key:
+    value: null
+  data.cov_keys:
+    value: [cell_line]
+  data.result_avg_keys:
+    value: [cell_line]
+  data.sample_mode:
+    value: set
+  data.cell_set_len:
+    value: 128
+
+  data.train_batch_size:
+    values: [8]
 
   model.use_mask:
     value: false
   model.use_cell_emb:
     value: false
 
-  data.train_batch_size:
-    values: [32,64,256]
-
-  # sweep 项（注意：model 只能是单值 categorical，不要让它变成 list）
+  # Sweep settings (note: model must be a single categorical value; do not turn it into a list)
   model:
-    values: [cpa, biolord]
+    values: [state_sm]
     # values: [biolord, cpa, genepert, sclambda, decoder_only, latent_additive, linear_additive, prnet, sams_vae]
   
 
@@ -54,30 +72,13 @@ parameters:
     value: wandb
   logger.wandb.project:
     value: perturbench
-  # logger.wandb.name 会自动根据参数生成，格式：{model}_lr{lr}_wd{wd}_bs{batch_size}
-  # model.dropout:
-  #   distribution: uniform
-  #   min: 0.0
-  #   max: 0.3
 
   model.lr:
-    values: [1e-6, 1e-5, 1e-4, 1e-3]
-    # distribution: log_uniform_values
-    # value: 1e-6
-    # max: 1e-3
+    values: [1e-5]
 
-  # Learning rate scheduler parameters (unified across all models)
   model.lr_scheduler_mode:
     value: onecycle  # Use ReduceLROnPlateau for better convergence
-  # model.lr_scheduler_patience:
-  #   value: 10  # Wait 10 epochs before reducing LR when val_loss stops improving
-  # model.lr_scheduler_factor:
-  #   value: 0.5  # Reduce LR by factor of 0.5
 
-  # model.lr_scheduler_max_lr:
-  #   distribution: log_uniform_values
-  #   min: 1e-4
-  #   max: 1e-2
 
   model.wd:
     # values: [1e-8, 1e-7, 1e-6, 1e-5, 1e-4]
@@ -88,8 +89,6 @@ parameters:
     values: ["val_loss_epoch"]
   callbacks.early_stopping.patience:
     values: [50]
-
-# 核心：command 里只写 program，所有超参由 wandb 通过 ${args} 注入 (--key value)
 
 program: /fs-computility-new/upzd_share/maoxinjie/AIVC/mxj/perturbench-main/src/perturbench/modelcore/train.py
 command:

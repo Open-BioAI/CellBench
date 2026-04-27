@@ -17,7 +17,7 @@ mask_prior_probability: 0.01
 softplus_output: True
 disable_sparsity: false
 disable_e_dist: false
-generative_counterfactual: true #否则任务为重建扰动后分布
+generative_counterfactual: true # Otherwise the task is to reconstruct the perturbed distribution
 
 ## Optimizer params
 lr: 1e-4  # Reduced learning rate for better numerical stability

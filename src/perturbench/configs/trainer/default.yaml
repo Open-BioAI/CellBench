@@ -9,7 +9,7 @@ accelerator: gpu
 devices: 1
 # Use 2 GPUs for training
 # devices: [0]
-# strategy: auto  # 单GPU训练使用auto策略（默认）
+# strategy: auto  # Use auto strategy for single GPU training (default)
 
 # mixed precision for extra speed-up (disabled for single GPU to avoid scaler issues)
 precision: 32

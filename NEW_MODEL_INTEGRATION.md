@@ -1,67 +1,67 @@
-# 新模型集成教程（PerturBench）
+# New Model Integration Tutorial (PerturBench)
 
-本文面向当前仓库，给出一套可直接落地的新模型集成流程。你可以把它当成 checklist：按顺序做完，模型通常就能被 `train.py` 和 `wandb sweep` 正常调用。
+This document provides a directly implementable new model integration process for the current repository. You can treat it as a checklist: follow the steps in order, and your model should be callable by `train.py` and `wandb sweep` normally.
 
 ---
 
-## 1. 集成目标
+## 1. Integration Goals
 
-完成后应满足：
+After completion, it should satisfy:
 
-- 能通过 Hydra 选择模型并启动训练：
+- Ability to select model and start training through Hydra:
   - `python src/perturbench/modelcore/train.py model=<your_model> ...`
-- 能在 sweep 中注入超参数并执行：
+- Ability to inject hyperparameters in sweep and execute:
   - `wandb sweep <yaml>`
   - `wandb agent <entity/project/sweep_id>`
-- 训练/验证/测试评估链路不报接口错误。
+- No interface errors in training/validation/test evaluation pipeline.
 
 ---
 
-## 2. 需要改哪些位置
+## 2. Which Files Need to Be Modified
 
-最少涉及 3 类文件：
+At least 3 types of files are involved:
 
-1. **模型代码文件**  
+1. **Model code file**  
    `src/perturbench/modelcore/models/<your_model>.py`
 
-2. **模型配置文件**  
+2. **Model configuration file**  
    `src/perturbench/configs/model/<your_model>.yaml`
 
-3. **模型注册入口**  
+3. **Model registration entry**  
    `src/perturbench/modelcore/models/__init__.py`
 
-> 如果要跑 `wandb sweep`，还要检查 `src/perturbench/modelcore/train.py` 的 CLI 参数解析白名单（见第 6 节）。
+> If you want to run `wandb sweep`, you also need to check the CLI parameter parsing whitelist in `src/perturbench/modelcore/train.py` (see Section 6).
 
 ---
 
-## 3. 模型代码规范（建议模板）
+## 3. Model Code Specifications (Recommended Template)
 
-仓库中大多数模型继承 `PerturbationModel`，并沿用统一训练接口。推荐结构：
+Most models in the repository inherit from `PerturbationModel` and follow a unified training interface. Recommended structure:
 
-1. 继承：
+1. Inheritance:
    - `class YourModel(PerturbationModel):`
-2. `__init__`：
-   - 接收 `datamodule`、`lr`、`wd`、`use_mask`、scheduler 参数等
-   - 调用 `super(..., datamodule=datamodule, ...)`
-3. 实现核心方法：
+2. `__init__`:
+   - Accepts `datamodule`, `lr`, `wd`, `use_mask`, scheduler parameters, etc.
+   - Calls `super(..., datamodule=datamodule, ...)`
+3. Implement core methods:
    - `forward(...)`
    - `training_step(...)`
    - `validation_step(...)`
    - `predict(...)`
-4. loss：
-   - 优先复用基类的 `auto_mse(...)`
-   - mask 逻辑优先复用 `_get_mask(batch)`
+4. Loss:
+   - Prefer to reuse the base class's `auto_mse(...)`
+   - Prefer to reuse `_get_mask(batch)` for mask logic
 
-建议优先参考：
+Recommended references:
 
 - `src/perturbench/modelcore/models/linear_additive.py`
 - `src/perturbench/modelcore/models/latent_additive.py`
 
 ---
 
-## 4. 配置文件写法（Hydra）
+## 4. Configuration File Writing (Hydra)
 
-在 `src/perturbench/configs/model/` 下新建 `<your_model>.yaml`，核心是 `_target_`：
+Create a new `<your_model>.yaml` under `src/perturbench/configs/model/`, with the core being `_target_`:
 
 ```yaml
 _target_: perturbench.modelcore.models.YourModel
@@ -75,150 +75,149 @@ wd: 1e-6
 lr_scheduler_mode: onecycle
 ```
 
-关键点：
+Key points:
 
-- `_target_` 必须能定位到你的 Python 类。
-- 参数名必须和模型 `__init__` 对齐。
-- 与数据侧联动参数（如 `use_covs`）建议保持与现有模型一致语义。
+- `_target_` must be able to locate your Python class.
+- Parameter names must align with the model's `__init__`.
+- Parameters linked to the data side (such as `use_covs`) should maintain consistent semantics with existing models.
 
 ---
 
-## 5. 模型注册
+## 5. Model Registration
 
-在 `src/perturbench/modelcore/models/__init__.py` 增加导入：
+Add the import in `src/perturbench/modelcore/models/__init__.py`:
 
 ```python
 from .your_model import YourModel
 ```
 
-不注册通常会导致 `_target_` 可读性和统一入口变差，也容易在后续维护中遗漏。
+Not registering usually leads to poor readability of `_target_` and a less unified entry point, and it's easy to miss during subsequent maintenance.
 
 ---
 
-## 6. Sweep 参数注入注意事项（重要）
+## 6. Sweep Parameter Injection Notes (Important)
 
-当前仓库的 `train.py` 使用了“argparse + Hydra override”混合模式。
+The `train.py` in the current repository uses a mixed mode of "argparse + Hydra override".
 
-这意味着：
+This means:
 
-- sweep 传入的参数如果不在 `train.py` 的 parser 或映射中，可能无法按预期落到最终配置。
+- If the parameters passed by sweep are not in `train.py`'s parser or mapping, they may not be applied to the final configuration as expected.
 
-如果你给模型新增 sweep 超参（例如 `model.foo`），建议在：
+If you add new sweep hyperparameters to the model (e.g., `model.foo`), it is recommended to:
 
-- `_build_arg_parser()` 增加 `parser.add_argument("--model.foo", ...)`
-- `_apply_cli_overrides()` 的 `mapping` 增加：
+- Add `parser.add_argument("--model.foo", ...)` in `_build_arg_parser()`
+- Add to `mapping` in `_apply_cli_overrides()`:
   - `"model_foo": "model.foo"`
 
-这样最稳，尤其在你们当前 `wandb` 通过 `${args}` 注入参数时。
+This is the most stable approach, especially when your current `wandb` injects parameters through `${args}`.
 
 ---
 
-## 7. 最小验证流程
+## 7. Minimum Validation Flow
 
-按下面顺序检查，定位问题最快：
+Check in the following order to locate problems most quickly:
 
-1. **仅构建配置（不训练）**
+1. **Configuration only (no training)**
    - `python src/perturbench/modelcore/train.py model=<your_model> train=false test=false`
-2. **1 epoch 训练**
+2. **1 epoch training**
    - `python src/perturbench/modelcore/train.py model=<your_model> trainer.max_epochs=1 train=true test=false`
-3. **训练+测试**
+3. **Training + testing**
    - `python src/perturbench/modelcore/train.py model=<your_model> train=true test=true`
-4. **sweep 单次 trial**
+4. **Single sweep trial**
    - `wandb sweep <your_sweep.yaml>`
    - `wandb agent --count 1 <entity/project/sweep_id>`
 
 ---
 
-## 8. 以 `latent_additive` 集成为例
+## 8. Example: Integrating `latent_additive`
 
-这里用仓库现有的 `latent_additive` 演示“一个模型是如何被接入完整链路”的。
+Here we use the existing `latent_additive` in the repository to demonstrate "how a model is integrated into the complete pipeline".
 
-### 8.1 代码入口
+### 8.1 Code Entry Points
 
-- 模型实现：`src/perturbench/modelcore/models/latent_additive.py`
-- 模型配置：`src/perturbench/configs/model/latent_additive.yaml`
-- 注册入口：`src/perturbench/modelcore/models/__init__.py`
+- Model implementation: `src/perturbench/modelcore/models/latent_additive.py`
+- Model configuration: `src/perturbench/configs/model/latent_additive.yaml`
+- Registration entry: `src/perturbench/modelcore/models/__init__.py`
 
-### 8.2 配置如何指向代码
+### 8.2 How Configuration Points to Code
 
-`latent_additive.yaml` 通过：
+`latent_additive.yaml` uses:
 
 ```yaml
 _target_: perturbench.modelcore.models.LatentAdditive
 ```
 
-把 Hydra 选择器 `model=latent_additive` 绑定到 Python 类 `LatentAdditive`。
+to bind the Hydra selector `model=latent_additive` to the Python class `LatentAdditive`.
 
-同文件中参数（如 `n_layers`、`encoder_width`、`latent_dim`、`dropout`、`softplus_output`）会直接传入类构造函数。
+Parameters in the same file (such as `n_layers`, `encoder_width`, `latent_dim`, `dropout`, `softplus_output`) are directly passed to the class constructor.
 
-### 8.3 模型类做了什么
+### 8.3 What the Model Class Does
 
-`LatentAdditive` 的典型路径：
+Typical path for `LatentAdditive`:
 
-1. 调用 `PerturbationModel` 父类初始化，接入统一优化器/调度器/mask逻辑；
-2. 从 `datamodule` 读取维度信息（基因维度、扰动编码维度、协变量维度）；
-3. 使用 `MixedPerturbationEncoder` 编码 perturbation；
-4. 将 control 输入编码到 latent 空间，与 perturbation latent 做加和；
-5. 解码到基因表达空间，输出预测；
-6. 训练/验证时用 `auto_mse` 计算损失并打日志。
+1. Call `PerturbationModel` parent class initialization to access unified optimizer/scheduler/mask logic;
+2. Read dimension information from `datamodule` (gene dimension, perturbation encoding dimension, covariate dimension);
+3. Use `MixedPerturbationEncoder` to encode perturbation;
+4. Encode control input into latent space, add it to perturbation latent;
+5. Decode to gene expression space and output prediction;
+6. Use `auto_mse` to calculate loss and log during training/validation.
 
-### 8.4 与数据配置的联动
+### 8.4 Linkage with Data Configuration
 
-该模型支持 `use_covs` 自动联动：
+The model supports automatic linkage with `use_covs`:
 
-- 若 `datamodule.train_dataset.transform.use_covs=True`，则模型侧自动启用协变量拼接（即使配置里没显式开）。
+- If `datamodule.train_dataset.transform.use_covs=True`, the model side automatically enables covariate concatenation (even if not explicitly enabled in the configuration).
 
-这就是为什么在 sweep 中，`data.transform.use_covs` 与模型表现会直接相关。
+This is why `data.transform.use_covs` is directly related to model performance in sweeps.
 
-### 8.5 在 train.py 中如何被调用
+### 8.5 How It's Called in train.py
 
-训练入口 `src/perturbench/modelcore/train.py` 会：
+The training entry `src/perturbench/modelcore/train.py` will:
 
-1. 解析 CLI / sweep 注入参数；
-2. 通过 Hydra 实例化 `cfg.data` 与 `cfg.model`；
-3. 执行 `trainer.fit(...)` 与可选 `trainer.test(...)`。
+1. Parse CLI / sweep injected parameters;
+2. Instantiate `cfg.data` and `cfg.model` through Hydra;
+3. Execute `trainer.fit(...)` and optional `trainer.test(...)`.
 
-对 `latent_additive` 来说，你只要保证：
+For `latent_additive`, you just need to ensure:
 
 - `model=latent_additive`
-- 相关超参与 `__init__` 对齐
+- Relevant hyperparameters align with `__init__`
 
-就可以直接进入训练流程。
+Then you can directly enter the training process.
 
-### 8.6 复制该模式接入新模型
+### 8.6 Copy This Pattern to Integrate New Models
 
-如果你要新加 `my_model`，最省事的方式是：
+If you want to add a new `my_model`, the most convenient way is:
 
-1. 复制 `latent_additive.py` 为模板改网络结构；
-2. 新建 `my_model.yaml` 并替换 `_target_`；
-3. 在 `models/__init__.py` 注册；
-4. 若 sweep 传新参数，补 `train.py` 参数白名单；
-5. 按第 7 节做最小验证。
-
----
-
-## 9. 常见问题速查
-
-- **`_target_` 找不到类**
-  - 检查 yaml 路径和类名是否一致
-  - 检查 `models/__init__.py` 是否注册
-
-- **训练时 batch 字段不存在**
-  - 对齐现有 batch 协议（`pert_cell_counts`、`control_cell_counts`、covariate keys）
-  - 优先参考 `linear_additive.py` 的字段访问方式
-
-- **sweep 参数不生效**
-  - 检查 `train.py` 的 `argparse` + `mapping` 是否包含新增参数
-
-- **covariates 维度不匹配**
-  - 检查 `use_covs` 是否与 transform 保持一致
-  - 打印拼接前后 tensor shape
+1. Copy `latent_additive.py` as a template and modify the network structure;
+2. Create a new `my_model.yaml` and replace `_target_`;
+3. Register in `models/__init__.py`;
+4. If new parameters are passed in sweep, add them to `train.py` parameter whitelist;
+5. Perform minimum validation as per Section 7.
 
 ---
 
-## 10. 推荐实践
+## 9. Common Issues Quick Check
 
-- 新模型先做“最小可跑版本”，保证接口稳定后再加复杂机制。
-- 尽量复用基类能力（mask、scheduler、logging），减少重复代码。
-- 每加一个 sweep 参数，就同步补 `train.py` 映射，避免线上 trial 空跑。
+- **`_target_` cannot find the class**
+  - Check if the yaml path and class name are consistent
+  - Check if `models/__init__.py` is registered
 
+- **Batch field does not exist during training**
+  - Align with existing batch protocol (`pert_cell_counts`, `control_cell_counts`, covariate keys)
+  - Prefer to reference field access methods in `linear_additive.py`
+
+- **Sweep parameters not taking effect**
+  - Check if `train.py`'s `argparse` + `mapping` includes the new parameters
+
+- **Covariates dimension mismatch**
+  - Check if `use_covs` is consistent with transform
+  - Print tensor shapes before and after concatenation
+
+---
+
+## 10. Recommended Practices
+
+- Start with a "minimally runnable version" for new models, and add complex mechanisms after ensuring interface stability.
+- Reuse base class capabilities as much as possible (mask, scheduler, logging) to reduce duplicate code.
+- When adding a sweep parameter, synchronously update the `train.py` mapping to avoid empty runs in online trials.

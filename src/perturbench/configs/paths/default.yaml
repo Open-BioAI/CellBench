@@ -4,7 +4,7 @@ cfg_dir:
 data_dir: /fs-computility-new/upzd_share/maoxinjie/wenqianhong/perturbench-main/notebooks/neurips2025/perturbench_data
 
 # path to logging directory
-# 使用绝对路径确保写到共享存储，而不是节点本地目录
+# Use absolute path to ensure writing to shared storage, not node local directory
 log_dir: /fs-computility-new/upzd_share/maoxinjie/AIVC/mxj/perturbench-main/logs/
 
 # path to output directory, created dynamically by hydra

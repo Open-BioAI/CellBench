@@ -14,7 +14,7 @@ class noop_collate:
             return batch
 
 class inference_collate:
-    """推理时的 collate 函数"""
+    """Collate function for inference"""
 
     def __call__(self, data_list: list):
         #[(example_dict,obs),(example_dict,obs),.............]
@@ -30,9 +30,9 @@ class inference_collate:
                 elif isinstance(val, torch.Tensor):
                     batch_dict[key].append(val)
                 elif isinstance(val, int):
-                    batch_dict[key].append(val)  # 保持 int，后面统一转
+                    batch_dict[key].append(val)  # Keep as int, convert uniformly later
                 elif isinstance(val, float):
-                    batch_dict[key].append(val)  # 保持 float，后面统一转
+                    batch_dict[key].append(val)  # Keep as float, convert uniformly later
                 elif isinstance(val, str):
                     batch_dict[key].append(np.array(val))
                 else:
@@ -57,7 +57,7 @@ class inference_collate:
 
 
 class train_collate:
-    """优化版 collate：支持 padded tensor 格式"""
+    """Optimized collate: supports padded tensor format"""
     
     def __call__(self, examples: list):
         #[example_dict1,example_dict2,example_dict3.........]
@@ -72,9 +72,9 @@ class train_collate:
                 elif isinstance(val, torch.Tensor):
                     batch_dict[key].append(val)
                 elif isinstance(val, int):
-                    batch_dict[key].append(val)  # 保持 int，后面统一转
+                    batch_dict[key].append(val)  # Keep as int, convert uniformly later
                 elif isinstance(val, float):
-                    batch_dict[key].append(val)  # 保持 float，后面统一转
+                    batch_dict[key].append(val)  # Keep as float, convert uniformly later
                 elif isinstance(val, str):
                     batch_dict[key].append(np.array(val))
                 else:
@@ -89,11 +89,10 @@ class train_collate:
             elif isinstance(first_val, np.ndarray):
                 batch_dict[key] = np.stack(vals)
             elif isinstance(first_val, int):
-                # int 类型（如 gene_pert_len）转为 LongTensor
+                # Convert int types (like gene_pert_len) to LongTensor
                 batch_dict[key] = torch.tensor(vals, dtype=torch.long)
             elif isinstance(first_val, float):
                 batch_dict[key] = torch.tensor(vals, dtype=torch.float32)
-            # list 类型保持原样（兼容旧代码）
+            # Keep list types as-is (compatible with old code)
 
         return batch_dict
-

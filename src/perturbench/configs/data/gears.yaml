@@ -1,26 +1,26 @@
 defaults:
-  - transform: gears_transform                         #加载transform配置
-  - splitter: null               #加载splitter配置
-  - evaluation: default                                 #加载evaluation配置
+  - transform: gears_transform                         # Load transform configuration
+  - splitter: null               # Load splitter configuration
+  - evaluation: default                                 # Load evaluation configuration
 
 _target_: perturbench.data.modules.PertDataModule
-data_path: ${paths.data_dir}/norman19_processed.h5ad    #预处理好的anndata路径
-train_batch_size: 32                                     #训练批次大小
-val_batch_size: ${data.train_batch_size}                                      #验证批次大小
-test_batch_size: ${data.train_batch_size}                                    #测试批次大小
-pert_key: perturbation                                  #adata.obs中扰动列名
-control_val: control                                    #扰动列中对照组名称
-cov_keys: [cell_cluster]                                   #协变量列名
+data_path: ${paths.data_dir}/norman19_processed.h5ad    # Path to preprocessed anndata
+train_batch_size: 32                                     # Training batch size
+val_batch_size: ${data.train_batch_size}                                      # Validation batch size
+test_batch_size: ${data.train_batch_size}                                    # Test batch size
+pert_key: perturbation                                  # Perturbation column name in adata.obs
+control_val: control                                    # Control group name in perturbation column
+cov_keys: [cell_cluster]                                   # Covariate column names
 result_avg_keys: [cell_cluster]
-perturbation_combination_delimiter: +                   #eg：双扰动数据扰动名为pert1+pert2格式
-embedding_key: null #None                               #若不为null，训练时提取adata.obsm[embedding_key]，作为模型输入训练
-cov_avg_sampling: False                                 #若为true，在训练时对每种协变量抽取cells比例相同
-add_keys: null                                          #补充还想用到的obs列
-predict_controls: False                               #模型可以预测对照组
+perturbation_combination_delimiter: +                   # e.g.: Dual perturbation data perturbation name in pert1+pert2 format
+embedding_key: null #None                               # If not null, extract adata.obsm[embedding_key] during training as model input
+cov_avg_sampling: False                                 # If true, sample cells with equal proportion for each covariate during training
+add_keys: null                                          # Additional obs columns to use
+predict_controls: False                               # Model can predict control group
 sharing_controls: False
 sample_mode: cell
 cell_set_len: null
-train_num_workers: 8  # 设为0避免 AF_UNIX path too long 错误
+train_num_workers: 8  # Set to 0 to avoid AF_UNIX path too long error
 val_num_workers: 8
 test_num_workers: 8
-n_top_hvgs: null                                        #若不为null，训练时只使用前n_top_hvgs个基因
+n_top_hvgs: null                                        # If not null, only use top n_top_hvgs genes during training

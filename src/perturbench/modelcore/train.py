@@ -251,37 +251,37 @@ def _apply_cli_overrides(cfg: DictConfig, args: argparse.Namespace | None) -> Di
 
 def find_latest_checkpoint(output_dir: str) -> Optional[str]:
     """
-    查找最新的 checkpoint 文件，用于自动恢复训练。
+    Find the latest checkpoint file for automatic training resume.
     
-    查找顺序：
-    1. 先查找 last.ckpt（如果存在）
-    2. 然后查找 checkpoints/ 下最新的 checkpoint
-    3. 返回最新的 checkpoint 路径
+    Search order:
+    1. First look for last.ckpt (if it exists)
+    2. Then look for the newest checkpoint under checkpoints/
+    3. Return the path of the newest checkpoint
     
     Args:
-        output_dir: Hydra 输出目录（包含 checkpoints 子目录）
+        output_dir: Hydra output directory (contains checkpoints subdirectory)
         
     Returns:
-        最新的 checkpoint 路径，如果不存在则返回 None
+        Path to the newest checkpoint, or None if not found
     """
     if not output_dir or not os.path.exists(output_dir):
         return None
     
     checkpoints = []
     
-    # 1. 查找 last.ckpt（最优先）
+    # 1. Look for last.ckpt first (highest priority)
     last_ckpt = os.path.join(output_dir, "last.ckpt")
     if os.path.exists(last_ckpt):
         log.info(f"Found last.ckpt: {last_ckpt}")
         return last_ckpt
     
-    # 2. 查找 checkpoints/ 下的所有 checkpoint（现在只有一个统一的目录）
+    # 2. Find all checkpoints under checkpoints/ (now a single unified directory)
     ckpt_dir = os.path.join(output_dir, "checkpoints")
     if os.path.exists(ckpt_dir):
         ckpts = glob.glob(os.path.join(ckpt_dir, "*.ckpt"))
         checkpoints.extend(ckpts)
     
-    # 4. 查找其他可能的 checkpoint 位置
+    # 4. Look for other possible checkpoint locations
     for pattern in ["*.ckpt", "checkpoints/**/*.ckpt"]:
         found = glob.glob(os.path.join(output_dir, pattern), recursive=True)
         checkpoints.extend(found)
@@ -289,7 +289,7 @@ def find_latest_checkpoint(output_dir: str) -> Optional[str]:
     if not checkpoints:
         return None
     
-    # 按修改时间排序，返回最新的
+    # Sort by modification time and return the latest one
     latest_ckpt = max(checkpoints, key=os.path.getmtime)
     log.info(f"Found latest checkpoint: {latest_ckpt} (modified: {os.path.getmtime(latest_ckpt)})")
     return latest_ckpt
@@ -297,12 +297,12 @@ def find_latest_checkpoint(output_dir: str) -> Optional[str]:
 
 def get_auto_experiment_name(cfg: DictConfig, model_name: str) -> str:
     OmegaConf.set_struct(cfg, False)
-    # 生成包含模型名、学习率、权重衰减和批大小的 run name
+    # Generate a run name containing model name, learning rate, weight decay, and batch size
     lr = cfg.get("model", {}).get("lr", "unknown")
     wd = cfg.get("model", {}).get("wd", "unknown")
     batch_size = cfg.get("data", {}).get("train_batch_size", "unknown")
 
-    # 格式化参数（避免科学计数法）
+    # Format parameters (avoid scientific notation)
     if isinstance(lr, float):
         lr_str = f"{lr:.0e}" if lr < 0.01 else f"{lr}"
     else:
@@ -317,7 +317,7 @@ def get_auto_experiment_name(cfg: DictConfig, model_name: str) -> str:
 
     auto_name = f"{model_name}_lr{lr_str}_wd{wd_str}_bs{batch_size_str}"
 
-    # 修改配置（在 logger 创建之前）
+    # Modify config (before logger creation)
     OmegaConf.update(cfg, "logger.wandb.name", auto_name, merge=False)
     log.info("Auto-generated wandb run name: %s (model: %s, lr: %s, wd: %s, bs: %s)",
              auto_name, model_name, lr_str, wd_str, batch_size_str)
@@ -357,29 +357,29 @@ def train(runtime_context: dict):
     datamodule: L.LightningDataModule =hydra.utils.instantiate(
         cfg.data,
         seed=cfg.seed
-    ) # 初始化cfg.data['_target_']对应的类，并返回一个实例
+    ) # Initialize the class specified by cfg.data['_target_'] and return an instance
 
     log.info("Instantiating model <%s>", cfg.model._target_)
-    model = hydra.utils.instantiate(cfg.model, datamodule=datamodule) # 初始化cfg.model['_target_']对应的类，并返回一个实例
+    model = hydra.utils.instantiate(cfg.model, datamodule=datamodule) # Initialize the class specified by cfg.model['_target_'] and return an instance
 
     log.info("Instantiating callbacks...")
     callbacks: List[L.Callback] = multi_instantiate(cfg.get("callbacks"))
 
-    # 在创建 loggers 之前，先提取 model 名称并修改配置
-    # 这样 WandbLogger 初始化时就能使用正确的 name
+    # Before creating loggers, extract model name and update config
+    # This allows WandbLogger to use the correct name on initialization
     
-    # 从 cfg 中推断 model 名称（从 _target_ 提取）
+    # Infer model name from cfg (extracted from _target_)
     model_target = cfg.get("model", {}).get("_target_", "")
     model_name = model_target.split('.')[-1].lower()
     
-    # 如果 logger.wandb.name 是默认的 "gears" 或未设置，在创建前修改配置
+    # If logger.wandb.name is default "gears" or unset, update it before creation
     auto_name = get_auto_experiment_name(cfg, model_name)
     log.info("Instantiating loggers...")
-    # 尝试实例化 loggers，如果 wandb 初始化失败，继续使用其他 loggers
+    # Try to instantiate loggers; if wandb initialization fails, continue with other loggers
 
     loggers: List[Logger] = multi_instantiate(cfg.get("logger"))
     
-    # 双重保险：如果 logger 已经创建但 name 还是 gears，再次设置
+    # Double check: if logger is already created but name is still gears, set it again
     for logger in loggers:
         if isinstance(logger, WandbLogger):
             logger.experiment.name = auto_name
@@ -390,10 +390,10 @@ def train(runtime_context: dict):
     )
 
     if cfg.get("train"):
-        # 自动检测并恢复 checkpoint（如果存在且未手动指定 ckpt_path）
+        # Automatically detect and resume checkpoint (if available and ckpt_path not manually specified)
         ckpt_path = cfg.get("ckpt_path")
         if ckpt_path is None:
-            # 尝试自动查找最新的 checkpoint
+            # Try to automatically find the latest checkpoint
             output_dir = cfg.get("paths", {}).get("output_dir", None)
             if output_dir:
                 auto_ckpt = find_latest_checkpoint(output_dir)
@@ -491,23 +491,23 @@ def main(cfg: DictConfig) -> float | None:
     # CLI parser args have highest priority: use them to override Hydra cfg
     cfg = _apply_cli_overrides(cfg, _PARSER_ARGS)
     
-    # 设置 TMPDIR：优先使用已设置的环境变量，否则设置为日志目录下的临时目录
-    # 这可以确保临时文件创建在与 checkpoint 相同的文件系统上，避免跨设备移动问题
+    # Set TMPDIR: prefer existing env var, otherwise use a temp directory under the log directory
+    # This ensures temp files are created on the same filesystem as checkpoints, avoiding cross-device move issues
     import os
     existing_tmpdir = os.environ.get("TMPDIR")
     if existing_tmpdir:
-        # 如果已经设置了TMPDIR（比如从run_multi_gpu_agents.sh），使用现有的设置
+        # If TMPDIR is already set (e.g., from run_multi_gpu_agents.sh), keep the existing setting
         log.info(f"Using existing TMPDIR: {existing_tmpdir}")
     else:
-        # 否则设置到日志目录下以避免跨设备checkpoint保存问题
+        # Otherwise set it under the log directory to avoid cross-device checkpoint save issues
         log_dir = cfg.get("paths", {}).get("log_dir", None)
         if log_dir:
-            # 确保 log_dir 存在
+            # Ensure log_dir exists
             os.makedirs(log_dir, exist_ok=True)
-            # 在 log_dir 下创建临时目录
+            # Create a temporary directory under log_dir
             tmp_dir = os.path.join(log_dir, ".tmp")
             os.makedirs(tmp_dir, exist_ok=True)
-            # 设置 TMPDIR 环境变量（仅对当前进程有效）
+            # Set TMPDIR environment variable (effective for current process only)
             os.environ["TMPDIR"] = tmp_dir
             log.info(f"Set TMPDIR to {tmp_dir} to avoid cross-device checkpoint save errors")
 
@@ -526,10 +526,10 @@ def main(cfg: DictConfig) -> float | None:
             )
             return combined_metric
     except Exception as e:
-        # 捕获所有异常，记录错误信息，然后重新抛出
-        # 这样 wandb agent 可以记录失败并继续下一个 run
+        # Catch all exceptions, log the error, then re-raise
+        # This lets wandb agent record the failure and continue to the next run
         log.error("Training failed with exception: %s", e, exc_info=True)
-        # 重新抛出异常，让 wandb agent 知道这个 run 失败了
+        # Re-raise the exception so wandb agent knows this run failed
         raise
 
 

@@ -17,9 +17,9 @@ model_checkpoint_loss:
   mode: min
   dirpath: ${paths.output_dir}/checkpoints
   filename: "best-{epoch:02d}-{step:06d}-{val_loss_epoch:.4f}"
-  save_top_k: 1  # 严格只保存1个最好的checkpoint
+  save_top_k: 1  # Strictly save only 1 best checkpoint
   save_last: false
-  auto_insert_metric_name: false  # 禁用自动版本控制
+  auto_insert_metric_name: false  # Disable auto versioning
 
 # Optional: Save last checkpoint for easy resume
 # Disabled by default to save disk space (only keep best loss and PCC checkpoints)

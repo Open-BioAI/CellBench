@@ -8,14 +8,14 @@ comb_delim: ${data.perturbation_combination_delimiter}
 control_val: ${data.control_val}
 build_GO_workers: 100
 seed: 42
-# GEARS原始论文参数 (从注释中恢复)
-hidden_size: 64  # 原始: 64, 当前: 384 (过大导致过拟合)
+# GEARS original paper parameters (recovered from comments)
+hidden_size: 64  # Original: 64, Current: 384 (too large causes overfitting)
 num_go_gnn_layers: 1
-num_gene_gnn_layers: 1  # 原始: 1, 当前: 2 (层数过多)
-decoder_hidden_size: 16  # 原始: 16, 当前: 48 (过大)
-num_similar_genes_go_graph: 20  # 原始: 20, 当前: 25
-num_similar_genes_co_express_graph: 20  # 原始: 20, 当前: 15
-coexpress_threshold: 0.4  # 原始: 0.4, 当前: 0.31 (过低)
+num_gene_gnn_layers: 1  # Original: 1, Current: 2 (too many layers)
+decoder_hidden_size: 16  # Original: 16, Current: 48 (too large)
+num_similar_genes_go_graph: 20  # Original: 20, Current: 25
+num_similar_genes_co_express_graph: 20  # Original: 20, Current: 15
+coexpress_threshold: 0.4  # Original: 0.4, Current: 0.31 (too low)
 uncertainty: False
 uncertainty_reg: 1
 direction_lambda: 1e-1
@@ -25,8 +25,8 @@ use_mask: false  # Enable expression mask for weighted loss calculation
 # use_covs is now auto-configured based on data.transform.use_covs
 # use_covs: False
 
-lr: 1e-3  # GEARS原始学习率
-wd: 1e-6  # 降低权重衰减
+lr: 1e-3  # GEARS original learning rate
+wd: 1e-6  # Reduce weight decay
 lr_scheduler_freq: 1
 lr_scheduler_interval: epoch
 lr_scheduler_patience: 10

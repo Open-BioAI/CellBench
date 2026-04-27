@@ -4,10 +4,10 @@
 
 model_checkpoint_loss:
   _target_: perturbench.modelcore.callbacks.robust_checkpoint.RobustModelCheckpoint
-  monitor: val_loss_epoch    # 监控 epoch 级别的 val_loss（更稳定）
-  mode: min                  # 越小越好
+  monitor: val_loss_epoch    # Monitor epoch-level val_loss (more stable)
+  mode: min                  # Lower is better
   dirpath: ${paths.output_dir}/checkpoints
   filename: "best-{epoch:02d}-{step:06d}-{val_loss_epoch:.4f}"
-  save_top_k: 1  # 严格只保存1个最好的checkpoint
+  save_top_k: 1  # Strictly save only 1 best checkpoint
   save_last: false
-  auto_insert_metric_name: false  # 禁用自动版本控制
+  auto_insert_metric_name: false  # Disable auto versioning

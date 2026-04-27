@@ -5,32 +5,30 @@ wandb:
   name: gears
   tags: ["hydra", "lightning", "perturbench"]
 
-  # 关键配置：彻底关闭环境扫描
+  # Key configuration: Completely disable environment scanning
   log_model: false
-  # 实时同步设置
-  offline: false  # 确保在线模式，实时同步
+  # Real-time sync settings
+  offline: false  # Ensure online mode for real-time sync
   settings:
     _disable_stats: true
     disable_git: true
     disable_code: true
     disable_job_creation: true
-    # ⬇⬇⬇关键一行 ⬇⬇⬇
+    # ⬇⬇⬇ Key line ⬇⬇⬇
     disable_python_packages: true
-    # 实时同步配置
+    # Real-time sync configuration
     save_code: false
     sync_tensorboard: true
-    # 设置同步间隔，确保实时上传
+    # Set sync interval to ensure real-time upload
     _sync_period: 10
-    # 增加初始化超时时间（默认 90 秒，增加到 300 秒）
+    # Increase initialization timeout (default 90 seconds, increased to 300 seconds)
     init_timeout: 300
-    # 使用线程模式启动，避免阻塞
+    # Use thread mode to start, avoid blocking
     _start_method: thread
-    # 增加重试次数和超时设置
+    # Increase retry times and timeout settings
     _network_timeout: 60
     _console: off
-    # 错误容忍度：允许 API 错误，不中断训练
+    # Error tolerance: Allow API errors without interrupting training
     _disable_service: false
-    # 设置重试次数
+    # Set retry times
     _retry_timeout: 30
-
-

@@ -1,25 +1,32 @@
 project: perturbench
-name: sciplex3_highdose_hvg_0122_prnet
+name: norman_hvg_0123_state_16
 method: grid
 
 metric:
-  goal: maximize
-  name: val_PCC_epoch
+  goal: minimize
+  name: val_loss_epoch
 
 parameters:
-  # 固定项
+  # Fixed settings
   data:
     value: mix_pert
+  data.sample_mode:
+    value: set
+  data.cov_keys:
+    value: [split_category]
+  data.result_avg_keys:
+    value: [split_category]
   # data.task:
   #   value: srivatsantrapnell2020_sciplex3
   data.data_path:
-    value: /fs-computility-new/upzd_share/maoxinjie/AIVC/mxj/perturbench-main/data/sciplex3_highdose_hvg.h5ad
+    value: ./tasks/unseen_perts/norman2019_comb_stack.h5ad
+  data.embedding_key:
+    value: stack-embed
 
   train:
     value: true
   test:
     value: true
-
   trainer.log_every_n_steps:
     value: 10
   trainer.max_epochs:
@@ -29,41 +36,46 @@ parameters:
   trainer.devices:
     value: 1
 
-  data.val_batch_size:
-    value: 256
-  data.test_batch_size:
-    value: 256
+  data.train_num_workers:
+    value: 0
+  data.val_num_workers:
+    value: 0
+  data.test_num_workers:
+    value: 0
+
   data.transform.use_covs:
     value: false
+  data.cell_set_len:
+    values: [32]
+  data.transform.gene_map_path:
+    value: ./ESM2_pert_features.pt
 
   model.use_mask:
     value: false
   model.use_cell_emb:
-    value: false
+    value: true
 
   data.train_batch_size:
-    values: [32,64,256]
+    values: [8]
 
-  # sweep 项（注意：model 只能是单值 categorical，不要让它变成 list）
+  # Sweep settings (note: model must be a single categorical value; do not turn it into a list)
   model:
-    values: [prnet]
-    # values: [biolord, cpa, genepert, sclambda, prnet, sams_vae]
+    values: [state_sm]
+    # values: [biolord, cpa, genepert, sclambda, squidiff, decoder_only, gears, latent_additive, linear_additive, prnet, sams_vae, state_sm]
   
 
   logger:
     value: wandb
   logger.wandb.project:
-    value: perturbench
-  # logger.wandb.name 会自动根据参数生成，格式：{model}_lr{lr}_wd{wd}_bs{batch_size}
+    value: _norman_stack
+  # logger.wandb.name is auto-generated from model name, format: {model}_lr{lr}
   # model.dropout:
   #   distribution: uniform
   #   min: 0.0
   #   max: 0.3
 
   model.lr:
-    values: [1e-6, 1e-5, 1e-4, 1e-3]
-    # values: [1e-6]
-    # values: [1e-6]
+    values: [1e-4]
     # distribution: log_uniform_values
     # min: 1e-6
     # max: 1e-3
@@ -91,7 +103,7 @@ parameters:
   callbacks.early_stopping.patience:
     values: [50]
 
-# 核心：command 里只写 program，所有超参由 wandb 通过 ${args} 注入 (--key value)
+# Key point: command only includes program; all hyperparameters are injected by wandb via ${args} (--key value)
 
 program: /fs-computility-new/upzd_share/maoxinjie/AIVC/mxj/perturbench-main/src/perturbench/modelcore/train.py
 command:

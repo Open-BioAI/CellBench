@@ -202,7 +202,7 @@ class DecoderOnly(PerturbationModel):
         return val_loss
 
     def predict(self, batch):
-        # 获取 control 表达并移动到当前设备
+        # Get control expression and move it to the current device
         control_expression = self._get_control_expression(batch).to(self.device)
         perturbation = self._encode_perturbation(batch).to(self.device)
         covariates = {cov_key:batch[cov_key] for cov_key in self.cov_keys}

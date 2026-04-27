@@ -41,7 +41,7 @@ def compare_perts(
         perts = list(perts)
 
     if features is not None:
-        # 只在共同存在于 pred/ref 的特征上进行子集化，以避免 KeyError
+        # Only subset on features that exist in both pred/ref to avoid KeyError
         common_feats = [f for f in features if f in pred.columns and f in ref.columns]
         pred = pred.loc[:, common_feats]
         ref = ref.loc[:, common_feats]
@@ -55,11 +55,11 @@ def compare_perts(
     eval_metric = []
     for p in perts:
         if deg_dict is not None:
-            # 只保留当前 DataFrame 中存在的基因，避免因掩码/子集导致的 KeyError
+            # Only keep genes that exist in the current DataFrame to avoid KeyError due to masking/subsetting
             genes = [g for g in deg_dict[p] if g in ref.columns]
             if len(genes) == 0:
-                # 如果该 perturbation 的 DEGs 在当前特征子集中全被过滤掉，
-                # 回退为使用所有可用特征
+                # If all DEGs for this perturbation are filtered out in the current feature subset,
+                # Fall back to using all available features
                 genes = list(ref.columns)
         else:
             genes = ref.columns

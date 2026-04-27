@@ -1,120 +1,120 @@
-# 运行代码教程
+# Code Running Tutorial
 
-## 1. 数据准备
+## 1. Data Preparation
 
-我们在 Google Drive 提供了一部分复现实验所需要的数据：
+We provide some of the data needed for reproducing the experiments on Google Drive:
 https://drive.google.com/drive/folders/1GrPW9x5_npnT7ILwDVsFWvfDIcqaSjdk?usp=sharing
 
-我们在 Google Drive 的目录下提供了该论文用到的数据。
+We provide the data used in this paper in the Google Drive directory.
 
-## 2. 实验教程
+## 2. Experiment Tutorial
 
-我们将给出跑通 unseen perturbation 实验作为教程。
+We will provide a tutorial on running the unseen perturbation experiment.
 
-## 3. 下载数据
+## 3. Download Data
 
-分别将 Google Drive 的 `unseen_perts` 目录和 `model_related` 目录下载到项目的根目录下。
+Download the `unseen_perts` directory and `model_related` directory from Google Drive to the root directory of the project respectively.
 
-## 4. 配置数据路径
+## 4. Configure Data Paths
 
-### Norman 数据集
+### Norman Dataset
 
-将 `./sweep/norman` 下的所有 `.yaml` 文件中 `parameters.data.data_path` 全都设置为：
+Set `parameters.data.data_path` in all `.yaml` files under `./sweep/norman` to:
 ```yaml
 ./unseen_perts/norman2019_comb_stack.h5ad
 ```
 
-### Replogle 数据集
+### Replogle Dataset
 
-将 `./sweep/replogle` 下的所有 `.yaml` 文件中 `parameters.data.data_path` 全都设置为：
+Set `parameters.data.data_path` in all `.yaml` files under `./sweep/replogle` to:
 ```yaml
 ./unseen_perts/ReplogleWeissman2022_K562_stack_hvg_split.h5ad
 ```
 
-### Sciplex 数据集
+### Sciplex Dataset
 
-将 `./sweep/sciplex` 下的所有 `.yaml` 文件中 `parameters.data.data_path` 全都设置为：
+Set `parameters.data.data_path` in all `.yaml` files under `./sweep/sciplex` to:
 ```yaml
 ./unseen_perts/SrivatsanTrapnell2020_sciplex3_stack_hvg_split.h5ad
 ```
 
-## 5. 配置特征映射路径
+## 5. Configure Feature Mapping Paths
 
-### Norman 和 Replogle 数据集
+### Norman and Replogle Datasets
 
-将 `./sweep/norman` 和 `./sweep/replogle` 下的所有 `.yaml` 文件中 `parameters.data.transform.gene_map_path` 全都设置为：
+Set `parameters.data.transform.gene_map_path` in all `.yaml` files under `./sweep/norman` and `./sweep/replogle` to:
 ```yaml
 ./model_related/ESM2_pert_features.pt
 ```
 
-### Sciplex 数据集
+### Sciplex Dataset
 
-将 `./sweep/sciplex` 下的所有 `.yaml` 文件中 `parameters.data.transform.drug_map_path` 全都设置为：
+Set `parameters.data.transform.drug_map_path` in all `.yaml` files under `./sweep/sciplex` to:
 ```yaml
 ./model_related/SMILES_pert_features.pt
 ```
 
-## 6. GEARS 模型配置
+## 6. GEARS Model Configuration
 
-对于 GEARS，需要如下设置：
+For GEARS, the following settings are required:
 
-### 设置数据路径
+### Set Data Paths
 
-- 将 `./sweep/norman/no-stack/gears.yaml` 的 `parameters.model.data_path` 全都设置为：
+- Set `parameters.model.data_path` in `./sweep/norman/no-stack/gears.yaml` to:
   ```yaml
   ./gears_norman
   ```
 
-- 将 `./sweep/replogle/no-stack/gears.yaml` 的 `parameters.model.data_path` 全都设置为：
+- Set `parameters.model.data_path` in `./sweep/replogle/no-stack/gears.yaml` to:
   ```yaml
   ./gears_replogle
   ```
 
-### 设置基因映射路径
+### Set Gene Mapping Paths
 
-将 `./src/perturbench/configs/model/gears.yaml` 中的以下参数设置：
+Set the following parameters in `./src/perturbench/configs/model/gears.yaml`:
 
-- `gene2go_path` 设置为：
+- Set `gene2go_path` to:
   ```yaml
   ./model_related/gene2go.pkl
   ```
 
-- `gene_set_path` 设置为：
+- Set `gene_set_path` to:
   ```yaml
   ./model_related/essential_all_data_pert_genes.pkl
   ```
 
-## 7. 环境配置
+## 7. Environment Configuration
 
-### 安装并激活环境
+### Install and Activate Environment
 
-首先在终端切换到该项目根目录下：
+First, switch to the project root directory in the terminal:
 
 ```bash
 conda env create -f ./vcbench.yml
 conda activate vcbench
 ```
 
-### 配置 WandB
+### Configure WandB
 
 ```bash
 wandb login
 ```
 
-输入你的 API KEY。
+Enter your API KEY.
 
-## 8. 运行实验
+## 8. Run Experiments
 
-对 `./sweep` 下所有 `.yaml` 文件都能这样运行：
+You can run all `.yaml` files under `./sweep` as follows:
 
 ```bash
 wandb sweep [yaml_path]
 ```
 
-终端会返回：Run Sweep Agent With: xxxxx
+The terminal will return: Run Sweep Agent With: xxxxx
 
-将 `xxxxx` 复制粘贴在终端再按回车就能启动进程。
+Copy and paste `xxxxx` into the terminal and press Enter to start the process.
 
-## 9. 查看进度
+## 9. Check Progress
 
-在浏览器登录 WandB 查看进程。
+Log in to WandB in your browser to check the progress.

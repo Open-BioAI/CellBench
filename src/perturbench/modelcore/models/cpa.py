@@ -61,7 +61,7 @@ class CPA(PerturbationModel):
             elementwise_affine: bool = False,
             datamodule: L.LightningDataModule | None = None,
             # add decoder_distribution
-            decoder_distribution: str = "IsotropicGaussian",  # 👈 加上这一行
+            decoder_distribution: str = "IsotropicGaussian",  # Add this line
             **kwargs
     ):
         """The constructor for the CPA module class.
@@ -387,8 +387,8 @@ class CPA(PerturbationModel):
             )  # shape: [batch_size, n_genes]
 
             mask = mask.to(masked_loss.device)
-            # 这样才算给每个batch上有效gene算好mse_loss以后在batch上求平均
-            valid = mask.sum(dim=1)  # 指定维度[batch]
+            # This computes mse_loss over valid genes per batch sample before averaging across the batch
+            valid = mask.sum(dim=1)  # Specify batch dimension [batch]
             recon_loss_per_batch = (masked_loss * mask).sum(dim=1)  # [batch]
             recon_loss = (recon_loss_per_batch / valid).nanmean()
 
@@ -476,9 +476,9 @@ class CPA(PerturbationModel):
         )
 
         if self.start_adv_training:
-            # 对抗训练阶段：交替更新生成器和对抗器
+            # Adversarial training stage: alternately update generator and adversary
             if batch_idx % self.adv_steps == 0:
-                # 更新生成器（autoencoder 部分），使用 total_loss（始终有梯度）
+                # Update generator (autoencoder part) using total_loss (always has gradients)
                 self.toggle_optimizer(optimizer_generative)
                 optimizer_generative.zero_grad()
                 self.manual_backward(total_loss)
@@ -486,9 +486,9 @@ class CPA(PerturbationModel):
                 self.untoggle_optimizer(optimizer_generative)
 
             else:
-                # 只有在 adv_loss 确实参与了计算图、需要梯度时才更新对抗器
-                # 当前版本中 adv_loss 可能是 zeros_like(recon_loss) 且不需要梯度，
-                # 这时对它调用 backward 会报 “does not require grad” 的错误。
+                # Update adversary only when adv_loss is part of the computation graph and requires gradients
+                # In the current version, adv_loss may be zeros_like(recon_loss) and not require gradients,
+                # and calling backward on it would raise a "does not require grad" error.
                 if adv_loss.requires_grad:
                     self.toggle_optimizer(optimizer_adversary)
                     optimizer_adversary.zero_grad()

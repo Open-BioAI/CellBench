@@ -141,23 +141,23 @@ class BiolordStar(PerturbationModel):
                 latent_input_expression
             )
         latent_perturbation = self.pert_encoder(batch)
-        # # 修复：检查协变量是否存在且有效
+        # # Fix: check whether covariates exist and are valid
         # if "cell_cluster" in covariates and len(covariates["cell_cluster"]) > 0:
         #     latent_covariates = torch.vstack(
         #         [self.lord_embedding[:, cov.bool()].T for cov in covariates["cell_cluster"]]
         #     )
-        # 处理协变量：将所有 covariate 的 one-hot 向量拼接，然后通过 lord_embedding 转换为嵌入
+        # Handle covariates: concatenate one-hot vectors of all covariates, then project with lord_embedding
         if self.use_covs and covariates and any(cov is not None and len(cov) > 0 for cov in covariates.values()):
-            # 拼接所有 covariate 的 one-hot 向量
-            # covariates 是一个字典，每个值是一个 tensor，形状为 [batch_size, onehot_dim]
+            # Concatenate one-hot vectors for all covariates
+            # covariates is a dictionary where each value is a tensor of shape [batch_size, onehot_dim]
             cov_tensors = [cov for cov in covariates.values() if cov is not None and len(cov) > 0]
             if cov_tensors:
                 batch_size = cov_tensors[0].shape[0]
-                # 按顺序拼接所有 covariate 的 one-hot 向量，形状变为 [batch_size, total_onehot_dim]
-                merged_cov = torch.cat(cov_tensors, dim=1)  # 在特征维度上拼接
-                # 通过 lord_embedding 转换为嵌入向量
-                # merged_cov 是 one-hot 向量，需要找到每个样本中为 1 的位置
-                # 使用矩阵乘法：lord_embedding @ merged_cov.T 然后转置
+                # Concatenate all covariate one-hot vectors in order, resulting in [batch_size, total_onehot_dim]
+                merged_cov = torch.cat(cov_tensors, dim=1)  # concatenate along feature dimension
+                # Project to embedding vectors via lord_embedding
+                # merged_cov is one-hot; locate the position of 1 in each sample
+                # Use matrix multiplication: lord_embedding @ merged_cov.T, then transpose
                 latent_covariates = (self.lord_embedding @ merged_cov.T).T  # [batch_size, latent_dim]
             else:
                 batch_size = latent_input_expression.shape[0]
@@ -167,12 +167,12 @@ class BiolordStar(PerturbationModel):
                     device=input_expression.device
                 )
         else:
-            # 当没有协变量时，使用全零向量，并确保在正确的设备上
+            # When no covariates exist, use an all-zero vector on the correct device
             batch_size = latent_input_expression.shape[0]
             latent_covariates = torch.zeros(
                 batch_size, 
                 self.lord_embedding.shape[0],
-                device=input_expression.device  # 确保在相同设备上
+                device=input_expression.device  # ensure the same device is used
             )
     
         latent_perturbed_expression = torch.cat(

@@ -10,16 +10,16 @@ import numpy as np
 import torch
 import pandas as pd
 from torch.utils.data import Dataset
-import random  # Python random 比 np.random 快
+import random  # Python random is faster than np.random
 from scipy.sparse import issparse
 
 
 class scTrainDataset(Dataset):
     """
-    高性能版本：
-    - 不使用 AnnData 切片
-    - 所有信息提前提取到 numpy 数组
-    - 不使用 Pandas 过滤
+    High-performance version:
+    - No AnnData slicing
+    - All information pre-extracted to numpy arrays
+    - No Pandas filtering
     """
 
     def __init__(
@@ -58,15 +58,15 @@ class scTrainDataset(Dataset):
         self.control_obs=control_adata.obs
 
         # -----------------------------------
-        # 1. 提前提取所有数据（极大提速）
+        # 1. Extract all data in advance (greatly speed up)
         # -----------------------------------
-        # 如果是稀疏矩阵，转为密集数组（随机访问更快）
+        # If it's a sparse matrix, convert to dense array (faster random access)
         X_pert = pert_adata.X
         X_ctrl = control_adata.X
         self.X_pert = X_pert.toarray() if issparse(X_pert) else np.asarray(X_pert)
         self.X_ctrl = X_ctrl.toarray() if issparse(X_ctrl) else np.asarray(X_ctrl)
         
-        # 转为 float32 并确保连续内存布局（加速 tensor 转换）
+        # Convert to float32 and ensure contiguous memory layout (speed up tensor conversion)
         if self.X_pert.dtype != np.float32:
             self.X_pert = self.X_pert.astype(np.float32)
         if self.X_ctrl.dtype != np.float32:
@@ -76,7 +76,7 @@ class scTrainDataset(Dataset):
 
         self.embedding_key = embedding_key
         if embedding_key:
-            # 转为 float32 连续数组（加速 tensor 转换）
+            # Convert to float32 contiguous array (speed up tensor conversion)
             emb_pert = pert_adata.obsm[embedding_key]
             emb_ctrl = control_adata.obsm[embedding_key]
             self.emb_pert = np.ascontiguousarray(emb_pert, dtype=np.float32)
@@ -94,7 +94,7 @@ class scTrainDataset(Dataset):
             self.raw_ctrl = None
 
         # -----------------------------------
-        # 2. 提前构建 obs 信息
+        # 2. Build obs information in advance
         # -----------------------------------
         self.pert_key = pert_key
         self.gene_key = gene_key
@@ -111,7 +111,7 @@ class scTrainDataset(Dataset):
         pert_obs = pert_adata.obs
         ctrl_obs = control_adata.obs
 
-        # 组合 cov 信息
+        # Combine cov information
         if cov_keys:
             pert_cov = self.merge_cols(pert_obs, cov_keys)
             ctrl_cov = self.merge_cols(ctrl_obs, cov_keys)
@@ -126,35 +126,35 @@ class scTrainDataset(Dataset):
         if not self.use_mix_pert:
             self.pert_labels=pert_obs[pert_key].astype(str).to_numpy()
         else:
-            # 处理 gene_key，先转换为字符串类型避免 Categorical 问题
+            # Process gene_key, convert to string type first to avoid Categorical issues
             gene_col = pert_obs[gene_key]
             if pd.api.types.is_categorical_dtype(gene_col):
                 gene_col = gene_col.astype(str)
             self.gene_pert_labels = gene_col.fillna('').astype(str).to_numpy()
 
-            # 处理 drug_key
+            # Process drug_key
             drug_col = pert_obs[drug_key]
             if pd.api.types.is_categorical_dtype(drug_col):
                 drug_col = drug_col.astype(str)
             self.drug_pert_labels = drug_col.fillna('').astype(str).to_numpy()
 
-            # 处理 env_key
+            # Process env_key
             env_col = pert_obs[env_key]
             if pd.api.types.is_categorical_dtype(env_col):
                 env_col = env_col.astype(str)
             self.env_pert_labels = env_col.fillna('').astype(str).to_numpy()
 
-            # 处理 crispr_key
+            # Process crispr_key
             crispr_col = pert_obs[crispr_key]
             if pd.api.types.is_categorical_dtype(crispr_col):
                 crispr_col = crispr_col.astype(str)
-            # CRISPR 列可能有很多空值（只有有 gene_pt 的列才有 CRISPR），将 NaN 转换为空字符串
+            # CRISPR column may have many null values (only columns with gene_pt have CRISPR), convert NaN to empty string
             self.crispr_labels = crispr_col.fillna('').astype(str).to_numpy()
 
         # -----------------------------------
-        # 3. 建立索引（代替 Pandas 过滤）
+        # 3. Build indices (replace Pandas filtering)
         # -----------------------------------
-        #（重要）为每个 cov / (cov,pert) 分组提前建立索引列表
+        # (Important) Pre-build index lists for each cov / (cov,pert) group
         index_by_cov_pert_tmp = {}
         index_by_cov_ctrl_tmp = {}
 
@@ -170,18 +170,18 @@ class scTrainDataset(Dataset):
 
         # weak check
         if any(len(v) == 0 for v in index_by_cov_ctrl_tmp.values()):
-            print("⚠ warning: 某些 control cov 为空")
+            print("⚠ warning: Some control cov are empty")
 
-        # 转换为 numpy 数组（加速 random.choice）
+        # Convert to numpy array (speed up random.choice)
         self.index_by_cov_pert = {k: np.array(v, dtype=np.int64) for k, v in index_by_cov_pert_tmp.items()}
         self.index_by_cov_ctrl = {k: np.array(v, dtype=np.int64) for k, v in index_by_cov_ctrl_tmp.items()}
 
         # cov unique
         self.unique_covs = np.unique(pert_cov)
         self.unique_keys = list(self.index_by_cov_pert.keys())
-        self._n_unique_keys = len(self.unique_keys)  # 缓存长度
+        self._n_unique_keys = len(self.unique_keys)  # Cache length
         
-        # 预分割 cov 字符串（避免 build_output 中重复 split）
+        # Pre-split cov strings (avoid repeated split in build_output)
         self._cov_split_cache = {}
         for key in self.unique_keys:
             cov = key[0]
@@ -189,13 +189,13 @@ class scTrainDataset(Dataset):
                 self._cov_split_cache[cov] = cov.split('<>')
 
         # -----------------------------------
-        # 4. transform 初始化
+        # 4. Transform initialization
         # -----------------------------------
         self.transform = transform(
             obs_df=pert_obs.copy()
         )
 
-        # 记录总长度
+        # Record total length
         self.length = len(pert_obs) if predict_controls \
             else len(pert_obs)+ len(ctrl_obs)
             
@@ -226,13 +226,13 @@ class scTrainDataset(Dataset):
             return self.get_single_sample()
 
     # ---------------------------------------------------------
-    # 采样一个单细胞（优化版）
+    # Sample a single cell (optimized version)
     # ---------------------------------------------------------
     def get_single_sample(self):
-        # 使用 Python random（比 np.random 快 3-5 倍）
+        # Use Python random (3-5x faster than np.random)
         key = self.unique_keys[random.randint(0, self._n_unique_keys - 1)]
         
-        # numpy 数组的随机选择
+        # Random selection from numpy array
         pert_arr = self.index_by_cov_pert[key]
         ctrl_arr = self.index_by_cov_ctrl[key[0]]
         pert_idx = pert_arr[random.randint(0, len(pert_arr) - 1)]
@@ -244,7 +244,7 @@ class scTrainDataset(Dataset):
             return self.build_output(pert_idx, ctrl_idx, key[0], key[1])
 
     # ---------------------------------------------------------
-    # 采样一个 set（多个细胞，优化版）
+    # Sample a set (multiple cells, optimized version)
     # ---------------------------------------------------------
     def get_set_sample(self):
         key = self.unique_keys[random.randint(0, self._n_unique_keys - 1)]
@@ -256,7 +256,7 @@ class scTrainDataset(Dataset):
         n_ctrl = len(ctrl_arr)
         cell_set_len = self.cell_set_len
 
-        # 优化：如果不需要 replace，用更快的方法
+        # Optimization: Use faster method if replacement is not needed
         if cell_set_len <= n_pert:
             pert_idxs = np.random.choice(pert_arr, size=cell_set_len, replace=False)
         else:
@@ -273,22 +273,22 @@ class scTrainDataset(Dataset):
             return self.build_output(pert_idxs, ctrl_idxs, key[0], key[1])
 
     # ---------------------------------------------------------
-    # 极速构建输出（跳过 transform，用于 mix_pert 模式）
+    # Fast build output (skip transform, used in mix_pert mode)
     # ---------------------------------------------------------
     def build_output_fast(self, pert_idx, ctrl_idx, key):
         """
-        极致优化版本：
-        - 使用预缓存的 cov 分割结果
-        - 使用 torch.from_numpy（零拷贝）
-        - 跳过 transform，直接构建输出
+        Ultra-optimized version:
+        - Use pre-cached cov split results
+        - Use torch.from_numpy (zero copy)
+        - Skip transform, directly build output
         """
         cov = key[0]
         gene_pert, drug_pert, env_pert, crispr_type = key[1], key[2], key[3], key[4]
         
-        # 使用预缓存的 transform
+        # Use pre-cached transform
         t = self.transform
         
-        # 预缓存的 null embeddings
+        # Pre-cached null embeddings
         gene_null = t._gene_null_emb
         drug_null = t._drug_null_emb
         env_null = t._env_null_emb
@@ -296,10 +296,10 @@ class scTrainDataset(Dataset):
         
         out = {}
         
-        # 使用预分割的 cov
+        # Use pre-split cov
         covs = self._cov_split_cache[cov]
         
-        # 协变量处理
+        # Covariate processing
         if t.use_covs:
             cov_maps = t.cov_maps
             cov_null_embs = t._cov_null_embs
@@ -312,7 +312,7 @@ class scTrainDataset(Dataset):
             out['drug_names'] = drug_pert.split(t.comb_delim)
             out['env_names'] = env_pert.split(t.comb_delim)
         
-        # gene embedding（padded tensor 格式）
+        # gene embedding (padded tensor format)
         if t.gene_pert_dim > 1:
             gene_map = t.gene_map
             gene_perts = gene_pert.split(t.comb_delim)
@@ -324,7 +324,7 @@ class scTrainDataset(Dataset):
             out['gene_pert'] = gene_tensor
             out['gene_pert_len'] = n_gene
         
-        # drug embedding（padded tensor 格式）
+        # drug embedding (padded tensor format)
         if t.drug_pert_dim > 1:
             drug_map = t.drug_map
             drug_perts = drug_pert.split(t.comb_delim)
@@ -352,7 +352,7 @@ class scTrainDataset(Dataset):
         if t.crispr_pert_dim > 1:
             out['crispr_pert'] = t.crispr_map.get(crispr_type, crispr_null)
         
-        # counts（使用 torch.from_numpy 零拷贝，数据已经是 float32 连续数组）
+        # counts (using torch.from_numpy zero copy, data is already float32 contiguous array)
         out['pert_cell_counts'] = torch.from_numpy(self.X_pert[pert_idx])
         out['control_cell_counts'] = torch.from_numpy(self.X_ctrl[ctrl_idx])
         
@@ -360,7 +360,7 @@ class scTrainDataset(Dataset):
         if self.pert_expression_mask is not None:
             out['mask'] = torch.from_numpy(self.pert_expression_mask[pert_idx])
         
-        # cell embedding（数据已在 __init__ 中转为 float32 连续数组）
+        # cell embedding (data already converted to float32 contiguous array in __init__)
         if t.use_cell_emb and self.emb_pert is not None:
             out['pert_cell_emb'] = torch.from_numpy(self.emb_pert[pert_idx])
             out['control_cell_emb'] = torch.from_numpy(self.emb_ctrl[ctrl_idx])
@@ -373,7 +373,7 @@ class scTrainDataset(Dataset):
         return out
 
     # ---------------------------------------------------------
-    # 构建 transform 输入字典（原始版本，用于非 mix_pert 模式）
+    # Build transform input dictionary (original version, used in non mix_pert mode)
     # ---------------------------------------------------------
     def build_output(self, pert_idx, ctrl_idx, cov, pert):
         out = {}
@@ -391,7 +391,7 @@ class scTrainDataset(Dataset):
         else:
             out[self.pert_key] = pert
 
-        # counts（使用 torch.from_numpy）
+        # counts (using torch.from_numpy)
         out["pert_cell_counts"] = torch.from_numpy(self.X_pert[pert_idx])
         out["control_cell_counts"] = torch.from_numpy(self.X_ctrl[ctrl_idx])
         
@@ -399,7 +399,7 @@ class scTrainDataset(Dataset):
         if self.pert_expression_mask is not None:
             out['mask'] = torch.from_numpy(self.pert_expression_mask[pert_idx])
             
-        # embedding（数据已在 __init__ 中转为 float32 连续数组）
+        # embedding (data already converted to float32 contiguous array in __init__)
         if self.emb_pert is not None:
             out["pert_cell_emb"] = torch.from_numpy(self.emb_pert[pert_idx])
             out["control_cell_emb"] = torch.from_numpy(self.emb_ctrl[ctrl_idx])
@@ -409,7 +409,7 @@ class scTrainDataset(Dataset):
             out["pert_raw_counts"] = torch.as_tensor(self.raw_pert[pert_idx], dtype=torch.float32)
             out["control_raw_counts"] = torch.as_tensor(self.raw_ctrl[ctrl_idx], dtype=torch.float32)
 
-        # transform（保持兼容）
+        # transform (maintain compatibility)
         return self.transform(out)
 
     def get_gene_names(self):

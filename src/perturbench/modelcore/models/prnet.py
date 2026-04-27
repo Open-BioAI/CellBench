@@ -305,8 +305,8 @@ class PRNet(PerturbationModel):
             if mask is not None:
                 # Masked Gaussian NLL loss
                 nll = 0.5 * (torch.log(var) + (pred - x_obs) ** 2 / var)
-                # 这样才算给每个batch上有效gene算好loss以后在batch上求平均
-                valid = mask.sum(dim=1)  # 指定维度[batch]
+                # This computes loss over valid genes per batch sample before averaging across the batch
+                valid = mask.sum(dim=1)  # Specify batch dimension [batch]
                 rec_per_batch = (nll * mask).sum(dim=1)  # [batch]
                 rec = (rec_per_batch / valid).nanmean()
             else:
@@ -316,8 +316,8 @@ class PRNet(PerturbationModel):
             if mask is not None:
                 # Masked MSE loss
                 mse = (pred - x_obs) ** 2
-                # 这样才算给每个batch上有效gene算好loss以后在batch上求平均
-                valid = mask.sum(dim=1)  # 指定维度[batch]
+                # This computes loss over valid genes per batch sample before averaging across the batch
+                valid = mask.sum(dim=1)  # Specify batch dimension [batch]
                 rec_per_batch = (mse * mask).sum(dim=1)  # [batch]
                 rec = (rec_per_batch / valid).nanmean()
             else:

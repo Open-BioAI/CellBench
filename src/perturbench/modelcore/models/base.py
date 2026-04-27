@@ -148,17 +148,17 @@ class PerturbationModel(L.LightningModule, ABC):
         )
 
         if self.lr_scheduler_mode == "onecycle":
-            # OneCycleLR: 需要 max_lr 和总步数
+            # OneCycleLR: requires max_lr and total steps
             max_lr = self.lr_scheduler_max_lr
             if max_lr is None:
                 max_lr = self.lr 
 
             total_steps = self.lr_scheduler_total_steps
             if total_steps is None and hasattr(self, 'trainer') and self.trainer is not None:
-                # 动态计算总步数：steps_per_epoch * max_epochs
+                # Dynamically calculate total steps: steps_per_epoch * max_epochs
                 try:
                     if hasattr(self.trainer, 'max_epochs') and hasattr(self.trainer.datamodule, 'train_dataloader'):
-                        # 获取训练 dataloader 的长度
+                        # Get length of training dataloader
                         train_dl = self.trainer.datamodule.train_dataloader()
                         steps_per_epoch = len(train_dl)
                         total_steps = steps_per_epoch * self.trainer.max_epochs
@@ -167,7 +167,7 @@ class PerturbationModel(L.LightningModule, ABC):
                     print(f"Could not calculate total_steps dynamically: {e}")
                     total_steps = 100 * 100  # fallback
             elif total_steps is None:
-                # 默认假设 100 个 epoch，每个 epoch 有 100 步
+                # Default assumption: 100 epochs, 100 steps per epoch
                 total_steps = 100 * 100
                 print(f"OneCycleLR: using default total_steps = {total_steps}")
 
@@ -179,12 +179,12 @@ class PerturbationModel(L.LightningModule, ABC):
             )
             lr_scheduler = {
                 "scheduler": scheduler,
-                "interval": "step",  # OneCycleLR 基于 step
+                "interval": "step",  # OneCycleLR based on step
             }
         elif self.lr_scheduler_mode == "step":
             scheduler = torch.optim.lr_scheduler.StepLR(
                 optimizer,
-                step_size=getattr(self, 'lr_scheduler_step_size', None) or 10,  # 每 N 个 epoch 降低一次
+                step_size=getattr(self, 'lr_scheduler_step_size', None) or 10,  # Decrease every N epochs
                 gamma=getattr(self, 'lr_scheduler_gamma', None) or 0.1,
             )
             lr_scheduler = {
@@ -284,42 +284,42 @@ class PerturbationModel(L.LightningModule, ABC):
 
     def _compute_sample_level_pcc(self, predicted_adata, reference_adata, eval_features):
         """
-        计算样本级别的 Pearson 相关系数 (PCC)，不进行聚合。
-        对每个样本计算预测值和真实值之间的 PCC，然后返回平均值。
+        Compute sample-level Pearson Correlation Coefficient (PCC) without aggregation.
+        Calculate PCC between predictions and ground truth for each sample, then return the average.
         
         Args:
-            predicted_adata: 预测的 AnnData 对象
-            reference_adata: 参考的 AnnData 对象
-            eval_features: 用于评估的基因子集
+            predicted_adata: Predicted AnnData object
+            reference_adata: Reference AnnData object
+            eval_features: Subset of genes used for evaluation
             
         Returns:
-            float: 所有样本 PCC 的平均值
+            float: Average PCC across all samples
         """
         from scipy.stats import pearsonr
         
-        # 获取 eval_features 对应的基因索引
+        # Get gene indices corresponding to eval_features
         gene_mask = np.isin(predicted_adata.var_names, eval_features)
         
-        # 提取预测和参考的表达矩阵
+        # Extract predicted and reference expression matrices
         pred_X = np.asarray(predicted_adata.X[:, gene_mask])
         ref_X = np.asarray(reference_adata.X[:, gene_mask])
         
-        # 确保样本数相同
+        # Ensure same number of samples
         n_samples = min(pred_X.shape[0], ref_X.shape[0])
         
-        # 计算每个样本的 PCC
+        # Calculate PCC for each sample
         pcc_values = []
         for i in range(n_samples):
             pred_row = pred_X[i].flatten()
             ref_row = ref_X[i].flatten()
             
-            # 跳过全零或常数行
+            # Skip all-zero or constant rows
             if np.std(pred_row) > 0 and np.std(ref_row) > 0:
                 pcc, _ = pearsonr(pred_row, ref_row)
                 if not np.isnan(pcc):
                     pcc_values.append(pcc)
         
-        # 返回平均 PCC
+        # Return average PCC
         if len(pcc_values) > 0:
             return float(np.mean(pcc_values))
         else:
@@ -327,11 +327,11 @@ class PerturbationModel(L.LightningModule, ABC):
 
     def _compute_ot_distances(self, predicted_adata, reference_adata, eval_features):
         """
-        计算分布距离指标：
-        1) Energy Distance（无超参统计距离）
-        2) Sinkhorn Divergence（GeomLoss, Wasserstein-2）
+        Compute distribution distance metrics:
+        1) Energy Distance (hyperparameter-free statistical distance)
+        2) Sinkhorn Divergence (GeomLoss, Wasserstein-2)
 
-        按 cov_pert 分组后求平均
+        Average after grouping by cov_pert
         """
         import numpy as np
         import torch
@@ -357,9 +357,9 @@ class PerturbationModel(L.LightningModule, ABC):
         device = "cuda" if torch.cuda.is_available() else "cpu"
 
         sinkhorn_loss = SamplesLoss(
-            loss="sinkhorn",   # Sinkhorn divergence（已 debiased）
+            loss="sinkhorn",   # Sinkhorn divergence (debiased)
             p=2,               # squared Euclidean cost → Wasserstein-2
-            blur=0.05,         # 正则强度（默认稳健）
+            blur=0.05,         # Regularization strength (default robust)
             scaling=0.9,
             backend="tensorized"
         )
@@ -369,7 +369,7 @@ class PerturbationModel(L.LightningModule, ABC):
             Y_t = torch.tensor(Y, dtype=torch.float32, device=device)
             return sinkhorn_loss(X_t, Y_t).item()
 
-        # ================= 数据准备 =================
+        # ================= Data Preparation =================
         gene_mask = np.isin(predicted_adata.var_names, eval_features)
 
         pred_X = np.asarray(predicted_adata.X[:, gene_mask])
@@ -384,7 +384,7 @@ class PerturbationModel(L.LightningModule, ABC):
                 parts.append(str(obs[c].iloc[idx]))
             return "_".join(parts)
 
-        # 分组
+        # Grouping
         pred_groups = {}
         for i in range(len(predicted_adata)):
             key = get_group_key(predicted_adata.obs, i)
@@ -395,7 +395,7 @@ class PerturbationModel(L.LightningModule, ABC):
             key = get_group_key(reference_adata.obs, i)
             ref_groups.setdefault(key, []).append(i)
 
-        # ================= 逐组计算 =================
+        # ================= Group-wise Calculation =================
         energy_values = []
         sinkhorn_values = []
 
@@ -428,48 +428,48 @@ class PerturbationModel(L.LightningModule, ABC):
 
     def _compute_pca_metrics(self, predicted_adata, reference_adata, eval_features, model_name, n_components=50):
         """
-        在 PCA 降维空间下计算指标：Evaluation 聚合指标、样本级别 PCC、Energy Distance、Sinkhorn Divergence。
+        Compute metrics in PCA reduced space: Evaluation aggregation metrics, sample-level PCC, Energy Distance, Sinkhorn Divergence.
         
-        使用参考数据拟合 PCA，然后将预测数据和参考数据都投影到该 PCA 空间中进行评估。
-        复用 Evaluation、_compute_sample_level_pcc 和 _compute_ot_distances 函数进行计算。
-        所有指标名称都带有 "pca_" 前缀。
+        Fit PCA on reference data, then project both predicted and reference data into this PCA space for evaluation.
+        Reuse Evaluation, _compute_sample_level_pcc, and _compute_ot_distances functions for calculations.
+        All metric names have "pca_" prefix.
         
         Args:
-            predicted_adata: 预测的 AnnData 对象
-            reference_adata: 参考的 AnnData 对象
-            eval_features: 用于评估的基因子集
-            model_name: 模型名称，用于 Evaluation
-            n_components: PCA 降维的维度数（默认 50）
+            predicted_adata: Predicted AnnData object
+            reference_adata: Reference AnnData object
+            eval_features: Subset of genes used for evaluation
+            model_name: Model name for Evaluation
+            n_components: Number of PCA dimensions (default: 50)
             
         Returns:
-            dict: 包含以下指标的字典（所有指标名都带 "pca_" 前缀）
-                - pca_{metric}_{aggr}: Evaluation 计算的聚合指标
-                - pca_{metric}_rank_{aggr}: Evaluation 计算的排名指标（如配置了 rank）
-                - pca_pcc_no_aggr: PCA 空间下的样本级别 PCC
-                - pca_energy_distance: PCA 空间下的 Energy Distance
-                - pca_sinkhorn_divergency: PCA 空间下的 Sinkhorn Divergence
+            dict: Dictionary containing the following metrics (all metric names have "pca_" prefix)
+                - pca_{metric}_{aggr}: Aggregation metrics computed by Evaluation
+                - pca_{metric}_rank_{aggr}: Ranking metrics computed by Evaluation (if rank is configured)
+                - pca_pcc_no_aggr: Sample-level PCC in PCA space
+                - pca_energy_distance: Energy Distance in PCA space
+                - pca_sinkhorn_divergency: Sinkhorn Divergence in PCA space
         """
         from sklearn.decomposition import PCA
         
-        # ================= 数据准备 =================
+        # ================= Data Preparation =================
         gene_mask = np.isin(predicted_adata.var_names, eval_features)
         pred_X = np.asarray(predicted_adata.X[:, gene_mask])
         ref_X = np.asarray(reference_adata.X[:, gene_mask])
         
-        # 确定实际使用的 PCA 维度（不超过特征数和样本数）
+        # Determine actual PCA dimensions (not exceeding number of features and samples)
         actual_n_components = min(n_components, pred_X.shape[1], ref_X.shape[0] - 1)
         
-        # ================= PCA 降维 =================
-        # 使用参考数据拟合 PCA
+        # ================= PCA Dimensionality Reduction =================
+        # Fit PCA on reference data
         pca = PCA(n_components=actual_n_components)
         ref_pca = pca.fit_transform(ref_X)
         pred_pca = pca.transform(pred_X)
         
-        # ================= 构建 PCA 空间的临时 AnnData =================
-        # 创建 PCA 维度的特征名（作为 eval_features 传递给复用函数）
+        # ================= Build Temporary AnnData for PCA Space =================
+        # Create PCA dimension feature names (passed as eval_features to reuse functions)
         pca_feature_names = [f"PC{i+1}" for i in range(actual_n_components)]
         
-        # 构建包含 PCA 数据的临时 AnnData，保留原始 obs 信息
+        # Build temporary AnnData containing PCA data, preserving original obs information
         pred_pca_adata = ad.AnnData(
             X=pred_pca,
             obs=predicted_adata.obs.copy(),
@@ -483,7 +483,7 @@ class PerturbationModel(L.LightningModule, ABC):
         
         pca_metrics_dict = {}
         
-        # ================= 1. 使用 Evaluation 计算聚合指标（PCA 空间）=================
+        # ================= 1. Compute Aggregation Metrics using Evaluation (PCA Space) =================
         cov_cols = [k for k in self.cov_keys if k not in self.result_avg_keys]
         
         ev = Evaluation(
@@ -515,11 +515,11 @@ class PerturbationModel(L.LightningModule, ABC):
                 avg_rank = rank_df.groupby("model").mean("rank")
                 pca_metrics_dict[f"pca_{metric}_rank_{aggr}"] = avg_rank["rank"].iloc[0]
         
-        # ================= 2. 样本级别 PCC（PCA 空间）=================
+        # ================= 2. Sample-level PCC (PCA Space) =================
         pca_pcc = self._compute_sample_level_pcc(pred_pca_adata, ref_pca_adata, pca_feature_names)
         pca_metrics_dict["pca_pcc_no_aggr"] = pca_pcc
         
-        # ================= 3. OT 距离（PCA 空间）=================
+        # ================= 3. OT Distances (PCA Space) =================
         pca_energy, pca_sinkhorn = self._compute_ot_distances(pred_pca_adata, ref_pca_adata, pca_feature_names)
         pca_metrics_dict["pca_energy_distance"] = pca_energy
         pca_metrics_dict["pca_sinkhorn_divergency"] = pca_sinkhorn
@@ -528,48 +528,48 @@ class PerturbationModel(L.LightningModule, ABC):
 
     def _compute_deg_metrics(self, predicted_adata, reference_adata, eval_features, top_n_deg=50):
         """
-        计算 DEG（差异表达基因）相关指标：IoU, Precision, Recall。
+        Compute DEG (Differentially Expressed Genes) related metrics: IoU, Precision, Recall.
         
-        对于每个 perturbation：
-        1. 在 predicted_adata 中计算该 pert 相对于 control 的 top DEG（按表达差异绝对值排序）
-        2. 在 reference_adata 中计算该 pert 相对于 control 的 top DEG
-        3. 计算两个 DEG 集合的 IoU, Precision, Recall
-        4. 在所有 pert 上求平均
+        For each perturbation:
+        1. Compute top DEG for the perturbation relative to control in predicted_adata (sorted by absolute expression difference)
+        2. Compute top DEG for the perturbation relative to control in reference_adata
+        3. Compute IoU, Precision, Recall for the two DEG sets
+        4. Average across all perturbations
         
         Args:
-            predicted_adata: 预测的 AnnData 对象
-            reference_adata: 参考的 AnnData 对象
-            eval_features: 用于评估的基因子集
-            top_n_deg: 每个 pert 选取的 top DEG 数量（默认 50）
+            predicted_adata: Predicted AnnData object
+            reference_adata: Reference AnnData object
+            eval_features: Subset of genes used for evaluation
+            top_n_deg: Number of top DEG to select per perturbation (default: 50)
             
         Returns:
             tuple: (mean_iou, mean_precision, mean_recall)
                 - IoU = |pred_DEG ∩ ref_DEG| / |pred_DEG ∪ ref_DEG|
-                - Precision = |pred_DEG ∩ ref_DEG| / |pred_DEG|  (预测的 DEG 中有多少在真实 DEG 中)
-                - Recall = |pred_DEG ∩ ref_DEG| / |ref_DEG|  (真实的 DEG 中有多少被预测到)
+                - Precision = |pred_DEG ∩ ref_DEG| / |pred_DEG|  (How many predicted DEG are in ground truth DEG)
+                - Recall = |pred_DEG ∩ ref_DEG| / |ref_DEG|  (How many ground truth DEG are captured by predicted DEG)
         """
-        # 获取 pert 列名
+        # Get pert column name
         pert_col = '_merged_pert_col_' if self.use_mix_pert else self.pert_key
         
-        # 获取 eval_features 对应的基因索引
+        # Get gene indices corresponding to eval_features
         gene_mask = np.isin(predicted_adata.var_names, eval_features)
         
-        # 提取表达矩阵
+        # Extract expression matrices
         pred_X = np.asarray(predicted_adata.X[:, gene_mask])
         ref_X = np.asarray(reference_adata.X[:, gene_mask])
         
-        # 获取基因名
+        # Get gene names
         genes = np.array(predicted_adata.var_names)[gene_mask]
         
-        # 分离 control 和 perturbation 样本
+        # Separate control and perturbation samples
         pred_ctrl_mask = (predicted_adata.obs[pert_col] == self.control_val).values
         ref_ctrl_mask = (reference_adata.obs[pert_col] == self.control_val).values
         
-        # 计算 control 的平均表达
+        # Calculate average control expression
         pred_ctrl_mean = pred_X[pred_ctrl_mask].mean(axis=0) if pred_ctrl_mask.sum() > 0 else np.zeros(pred_X.shape[1])
         ref_ctrl_mean = ref_X[ref_ctrl_mask].mean(axis=0) if ref_ctrl_mask.sum() > 0 else np.zeros(ref_X.shape[1])
         
-        # 获取所有 perturbation（排除 control）
+        # Get all perturbations (exclude control)
         all_perts = set(predicted_adata.obs[pert_col].unique()) | set(reference_adata.obs[pert_col].unique())
         perts = [p for p in all_perts if p != self.control_val]
         
@@ -578,40 +578,40 @@ class PerturbationModel(L.LightningModule, ABC):
         recall_values = []
         
         for pert in perts:
-            # 获取该 pert 的样本 mask
+            # Get sample mask for this pert
             pred_pert_mask = (predicted_adata.obs[pert_col] == pert).values
             ref_pert_mask = (reference_adata.obs[pert_col] == pert).values
             
-            # 跳过不存在的 pert
+            # Skip non-existent pert
             if pred_pert_mask.sum() == 0 or ref_pert_mask.sum() == 0:
                 continue
             
-            # 计算该 pert 的平均表达
+            # Calculate average expression for this pert
             pred_pert_mean = pred_X[pred_pert_mask].mean(axis=0)
             ref_pert_mean = ref_X[ref_pert_mask].mean(axis=0)
             
-            # 计算差异（相对于 control 的绝对差值）
+            # Calculate differences (absolute difference relative to control)
             pred_diff = np.abs(pred_pert_mean - pred_ctrl_mean)
             ref_diff = np.abs(ref_pert_mean - ref_ctrl_mean)
             
-            # 确定实际使用的 top_n（不超过基因总数）
+            # Determine actual top_n (not exceeding total number of genes)
             actual_top_n = min(top_n_deg, len(genes))
             
-            # 选取 top N DEG（按差异绝对值排序，取最大的 N 个）
+            # Select top N DEG (sorted by absolute difference, take largest N)
             pred_top_indices = np.argsort(pred_diff)[-actual_top_n:]
             ref_top_indices = np.argsort(ref_diff)[-actual_top_n:]
             
             pred_deg_set = set(genes[pred_top_indices])
             ref_deg_set = set(genes[ref_top_indices])
             
-            # 计算 IoU, Precision, Recall
+            # Calculate IoU, Precision, Recall
             intersection = len(pred_deg_set & ref_deg_set)
             union = len(pred_deg_set | ref_deg_set)
             
             iou = intersection / union if union > 0 else 0.0
-            # Precision: 预测的 DEG 中有多少在真实 DEG 中
+            # Precision: How many predicted DEG are in ground truth DEG
             precision = intersection / len(pred_deg_set) if len(pred_deg_set) > 0 else 0.0
-            # Recall: 真实的 DEG 中有多少被预测到
+            # Recall: How many ground truth DEG are captured by predicted DEG
             recall = intersection / len(ref_deg_set) if len(ref_deg_set) > 0 else 0.0
             
             iou_values.append(iou)
@@ -661,11 +661,11 @@ class PerturbationModel(L.LightningModule, ABC):
                 avg_rank = rank_df.groupby("model").mean("rank")
                 summary_metrics_dict[f"{metric}_rank_{aggr}"] = avg_rank["rank"]
 
-        # ====== 样本级别 PCC (no-aggr) 计算，不使用 evaluation 包 ======
+        # ====== Sample-level PCC (no-aggr) calculation, without using evaluation package ======
         sample_pcc = self._compute_sample_level_pcc(predicted_adata, reference_adata, eval_features)
         summary_metrics_dict["pcc_no_aggr"] = pd.Series({model_name: sample_pcc})
 
-        # ====== OT 距离计算 (MMD, Sinkhorn)，按 cov_pert 分组后求平均 ======
+        # ====== OT distance calculation (MMD, Sinkhorn), averaged by cov_pert group ======
         try:
             mean_mmd, mean_sinkhorn = self._compute_ot_distances(predicted_adata, reference_adata, eval_features)
             summary_metrics_dict["energy_distance"] = pd.Series({model_name: mean_mmd})
@@ -675,22 +675,22 @@ class PerturbationModel(L.LightningModule, ABC):
             summary_metrics_dict["energy_distance"] = pd.Series({model_name: 0.0})
             summary_metrics_dict["sinkhorn_divergency"] = pd.Series({model_name: 0.0})
 
-        # ====== PCA 空间下的指标计算 (Evaluation聚合指标, PCC, Energy Distance, Sinkhorn) ======
+        # ====== Metrics calculation in PCA space (Evaluation aggregation metrics, PCC, Energy Distance, Sinkhorn) ======
         try:
             pca_metrics = self._compute_pca_metrics(
                 predicted_adata, reference_adata, eval_features, model_name, n_components=50
             )
-            # 将所有 PCA 指标添加到 summary_metrics_dict（已带 "pca_" 前缀）
+            # Add all PCA metrics to summary_metrics_dict (already with "pca_" prefix)
             for metric_name, metric_value in pca_metrics.items():
                 summary_metrics_dict[metric_name] = pd.Series({model_name: metric_value})
         except Exception as e:
             print(f"Warning: PCA metrics computation failed: {e}")
-            # 设置默认的 PCA 指标为 0.0
+            # Set default PCA metrics to 0.0
             summary_metrics_dict["pca_pcc_no_aggr"] = pd.Series({model_name: 0.0})
             summary_metrics_dict["pca_energy_distance"] = pd.Series({model_name: 0.0})
             summary_metrics_dict["pca_sinkhorn_divergency"] = pd.Series({model_name: 0.0})
 
-        # ====== DEG 指标计算 (IoU, Precision, Recall)，按 pert 分组后求平均 ======
+        # ====== DEG metrics calculation (IoU, Precision, Recall), averaged by pert group ======
         try:
             deg_iou, deg_precision, deg_recall = self._compute_deg_metrics(
                 predicted_adata, reference_adata, eval_features, top_n_deg=50
@@ -771,121 +771,121 @@ class PerturbationModel(L.LightningModule, ABC):
 
     def _run_evaluation_per_cellclass(self, predicted_adata, reference_adata, model_name, output_dir):
         """
-        针对每个 cellclass 分别运行评估（使用 obs['cellclass'] 和 cellclass_mask_dict）。
+        Run evaluation separately for each cellclass (using obs['cellclass'] and cellclass_mask_dict).
         
-        此函数根据数据中是否存在 cellclass 分组信息，决定采用不同的评估策略：
-        - 若无 cellclass 信息：对全量数据进行统一评估
-        - 若有 cellclass 信息：按每个 cellclass 分组评估，并汇总结果
+        This function determines different evaluation strategies based on the presence of cellclass grouping information in the data:
+        - Without cellclass information: Perform unified evaluation on all data
+        - With cellclass information: Evaluate each cellclass group separately and aggregate results
         
         Args:
-            predicted_adata (AnnData): 模型预测的表达矩阵，obs 中应包含 'cellclass' 列（如适用）
-            reference_adata (AnnData): 参考（真实）表达矩阵，obs 中应包含 'cellclass' 列（如适用）
-            model_name (str): 模型名称，用于评估报告中标识模型
-            output_dir (str): 输出目录的根路径，评估结果将保存于此
+            predicted_adata (AnnData): Model-predicted expression matrix, obs should contain 'cellclass' column (if applicable)
+            reference_adata (AnnData): Reference (ground truth) expression matrix, obs should contain 'cellclass' column (if applicable)
+            model_name (str): Model name used to identify the model in evaluation reports
+            output_dir (str): Root path of output directory where evaluation results will be saved
         
         Returns:
             tuple: (summary_metrics, summary_metrics_dict, csv_path)
-                - summary_metrics (pd.DataFrame | None): 所有 cellclass 的平均评估指标 DataFrame
-                - summary_metrics_dict (dict): 按 cellclass 分组的指标字典 {cellclass: {metric: value}}
-                - csv_path (str | None): 汇总 CSV 文件的保存路径
+                - summary_metrics (pd.DataFrame | None): DataFrame of average evaluation metrics across all cellclasses
+                - summary_metrics_dict (dict): Metric dictionary grouped by cellclass {cellclass: {metric: value}}
+                - csv_path (str | None): Save path of the aggregated CSV file
         
-        输出目录结构（当有 cellclass 分组时）:
+        Output directory structure (when cellclass grouping is present):
         -----------------------------------------------
         {output_dir}/
-        ├── cellclass_evaluation/           # 按 cellclass 分组的评估结果
-        │   ├── {cellclass_1}/              # 第一个 cellclass 的结果目录
-        │   │   ├── summary.csv             # 该 cellclass 的评估指标摘要
-        │   │   ├── predictions.h5ad        # 该 cellclass 的预测结果 AnnData
-        │   │   └── ... (Evaluation.save() 生成的其他文件)
-        │   ├── {cellclass_2}/              # 第二个 cellclass 的结果目录
+        ├── cellclass_evaluation/           # Cellclass-specific evaluation results
+        │   ├── {cellclass_1}/              # Results directory for the first cellclass
+        │   │   ├── summary.csv             # Evaluation metric summary for this cellclass
+        │   │   ├── predictions.h5ad        # Predicted results AnnData for this cellclass
+        │   │   └── ... (Other files generated by Evaluation.save())
+        │   ├── {cellclass_2}/              # Results directory for the second cellclass
         │   │   └── ...
         │   └── ...
-        └── summary/                        # 汇总目录
-            ├── summary_by_cellclass.csv    # 所有 cellclass 的详细指标（含 cellclass 列）
-            └── summary_avg.csv             # 所有 cellclass 的平均指标
+        └── summary/                        # Aggregation directory
+            ├── summary_by_cellclass.csv    # Detailed metrics for all cellclasses (with cellclass column)
+            └── summary_avg.csv             # Average metrics across all cellclasses
         
-        输出目录结构（当无 cellclass 分组时）:
+        Output directory structure (when no cellclass grouping):
         -----------------------------------------------
         {output_dir}/
         └── summary/
-            ├── summary_metrics_{ckpt_type}.csv  # 评估指标摘要
-            └── predictions_{ckpt_type}.h5ad     # 预测结果 AnnData
+            ├── summary_metrics_{ckpt_type}.csv  # Evaluation metric summary
+            └── predictions_{ckpt_type}.h5ad     # Predicted results AnnData
         {evaluation_config.save_dir}/
-            ├── summary.csv                      # 评估指标摘要（复制）
-            └── ... (Evaluation.save() 生成的其他文件)
+            ├── summary.csv                      # Evaluation metric summary (copy)
+            └── ... (Other files generated by Evaluation.save())
         """
-        # ========== 步骤1：检查是否需要按 cellclass 分组评估 ==========
-        # 如果 reference_adata.obs 中没有 'cellclass' 列，或者没有配置 cellclass_mask_dict，
-        # 则采用全量评估模式，直接对所有数据进行统一评估
+        # ========== Step 1: Check if cellclass-based evaluation is needed ==========
+        # If there's no 'cellclass' column in reference_adata.obs or no cellclass_mask_dict configured,
+        # use full evaluation mode and evaluate all data uniformly
         if 'cellclass' not in reference_adata.obs or not getattr(self, 'cellclass_mask_dict', None):
             ev, metrics, mdict = self._run_evaluation(
                 predicted_adata, reference_adata, None, model_name
             )
             return metrics, mdict, self._save_results(ev, metrics, predicted_adata, output_dir)[0]
         
-        # ========== 步骤2：获取预测和参考数据中共有的 cellclass 列表 ==========
-        # 取交集确保只评估两者都存在的 cellclass，并按字母顺序排序
+        # ========== Step 2: Get list of cellclasses common to both predicted and reference data ==========
+        # Take intersection to ensure only cellclasses present in both are evaluated, sorted alphabetically
         groups = sorted(set(predicted_adata.obs['cellclass'].unique()) & set(reference_adata.obs['cellclass'].unique()))
-        all_metrics, all_mdict = {}, {}  # 存储每个 cellclass 的评估结果
-        cc_dir = os.path.join(output_dir, "cellclass_evaluation")  # cellclass 评估结果的根目录
+        all_metrics, all_mdict = {}, {}  # Store evaluation results for each cellclass
+        cc_dir = os.path.join(output_dir, "cellclass_evaluation")  # Root directory for cellclass evaluation results
         
-        # ========== 步骤3：遍历每个 cellclass 进行独立评估 ==========
+        # ========== Step 3: Evaluate each cellclass independently ==========
         for cc in groups:
-            # 3.1 按 cellclass 筛选子集
+            # 3.1 Filter subset by cellclass
             _cellclass_mask=self.cellclass_mask_dict.get(cc,None)
             
             pred_sub = predicted_adata[predicted_adata.obs['cellclass'] == cc]
             ref_sub = reference_adata[reference_adata.obs['cellclass'] == cc]
             
-            # 3.2 跳过空数据集（无预测或无参考样本）
+            # 3.2 Skip empty datasets (no predicted or reference samples)
             if pred_sub.n_obs == 0 or ref_sub.n_obs == 0:
                 continue
             
             try:
-                # 3.4 对该 cellclass 子集运行评估
-                # 确保 _cellclass_mask 是一维 numpy 数组，用于正确索引 gene_names
+                # 3.4 Run evaluation on this cellclass subset
+                # Ensure _cellclass_mask is a 1D numpy array for correct gene_names indexing
                 if _cellclass_mask is not None:
                     _cellclass_mask = np.asarray(_cellclass_mask).flatten()
                 gene_names_arr = np.array(self.gene_names)
                 eval_gene_names = gene_names_arr[_cellclass_mask] if _cellclass_mask is not None else gene_names_arr
                 ev, metrics, mdict = self._run_evaluation(pred_sub, ref_sub,
                                                           eval_gene_names, model_name)
-                # 3.5 创建该 cellclass 的保存目录（将 '/' 替换为 '_' 避免路径问题）
+                # 3.5 Create save directory for this cellclass (replace '/' with '_' to avoid path issues)
                 save_dir = os.path.join(cc_dir, str(cc).replace('/', '_'))
                 os.makedirs(save_dir, exist_ok=True)
                 
-                # 3.6 保存评估结果
-                ev.save(save_dir)  # 保存 Evaluation 对象的完整结果
-                metrics.to_csv(os.path.join(save_dir, "summary.csv"), index_label="metric")  # 保存指标摘要
+                # 3.6 Save evaluation results
+                ev.save(save_dir)  # Save full Evaluation object results
+                metrics.to_csv(os.path.join(save_dir, "summary.csv"), index_label="metric")  # Save metric summary
                 
-                # 3.7 尝试保存预测的 AnnData（可能因磁盘空间等问题失败，静默处理）
+                # 3.7 Try to save predicted AnnData (may fail due to disk space etc., handle silently)
                 try:
                     pred_sub.write(os.path.join(save_dir, "predictions.h5ad"))
                 except Exception:
                     pass
                 
-                # 3.8 记录该 cellclass 的评估结果
+                # 3.8 Record evaluation results for this cellclass
                 all_metrics[cc], all_mdict[cc] = metrics, mdict
                 print(f"[{cc}] genes={pred_sub.n_vars}, saved to {save_dir}")
                 
             except Exception as e:
-                # 记录失败的 cellclass（不中断整体流程）
+                # Record failed cellclass (don't interrupt overall process)
                 print(f"[{cc}] failed: {e}")
         
-        # ========== 步骤4：检查是否有成功的评估结果 ==========
+        # ========== Step4：Check whether successful evaluation results exist ==========
         if not all_metrics:
             return None, {}, None
         
-        # ========== 步骤5：汇总所有 cellclass 的评估结果 ==========
+        # ========== Step5：Aggregate evaluation results for all cell classes ==========
         summary_dir = os.path.join(output_dir, "summary")
         os.makedirs(summary_dir, exist_ok=True)
         
-        # 5.1 保存按 cellclass 分组的详细指标表（每行带有 cellclass 标签）
+        # 5.1 Save detailed metrics grouped by cell class (each row includes a cell class label)
         pd.concat([df.assign(cellclass=cc) for cc, df in all_metrics.items()]).to_csv(
             os.path.join(summary_dir, "summary_by_cellclass.csv"), index_label="metric"
         )
         
-        # 5.2 计算并保存所有 cellclass 的平均指标
+        # 5.2 Compute and save average metrics across all cell classes
         avg = pd.concat(all_metrics.values()).groupby(level=0).mean()
         avg.to_csv(os.path.join(summary_dir, "summary_avg.csv"), index_label="metric")
         
@@ -893,134 +893,134 @@ class PerturbationModel(L.LightningModule, ABC):
 
     def on_test_end(self) -> None:
         """
-        测试阶段结束后的回调函数，负责汇总预测结果并进行评估。
+        Callback invoked at the end of testing to aggregate predictions and run evaluation.
         
-        此函数是 PyTorch Lightning 的生命周期钩子，在所有测试批次处理完成后自动调用。
-        主要完成以下工作：
-        1. 从所有分布式进程收集预测结果
-        2. 构建 AnnData 对象并运行评估
-        3. 保存评估结果和预测数据
-        4. 同步评估指标到所有进程
-        5. 清理内存资源
+        This function is a PyTorch Lightning lifecycle hook, automatically called after all test batches are processed.
+        Main responsibilities:
+        1. Collect prediction results from all distributed processes
+        2. Build AnnData objects and run evaluation
+        3. Save evaluation results and prediction data
+        4. Synchronize evaluation metrics to all processes
+        5. Release memory resources
         
-        分布式训练说明:
+        Distributed training notes:
         ----------------
-        - 在多 GPU/多节点训练时，每个进程只持有部分预测结果
-        - 本函数通过 all_gather_object 收集所有进程的预测结果
-        - 评估仅在 rank 0 进程执行，然后广播结果给其他进程
-        - 使用 barrier 同步确保所有进程在继续前达到一致状态
+        - In multi-GPU/multi-node training, each process only holds part of the predictions
+        - This function uses all_gather_object to collect predictions from all processes
+        - Evaluation runs only on rank 0, then results are broadcast to other processes
+        - Barrier synchronization ensures all processes are aligned before continuing
         
-        完整输出目录结构:
+        Complete output directory structure:
         ----------------
-        {output_dir}/                           # 由 Hydra 或 Logger 决定的根目录
-        ├── cellclass_evaluation/               # 按 cellclass 分组的评估结果（如适用）
+        {output_dir}/                           # Root directory determined by Hydra or Logger
+        ├── cellclass_evaluation/               # Evaluation results grouped by cell class (if applicable)
         │   ├── {cellclass_1}/
-        │   │   ├── summary.csv                 # 该 cellclass 的评估指标
-        │   │   ├── predictions.h5ad            # 该 cellclass 的预测 AnnData
-        │   │   ├── aggregations/               # Evaluation.save() 生成的聚合结果
+        │   │   ├── summary.csv                 # Evaluation metrics for this cell class
+        │   │   ├── predictions.h5ad            # Predicted AnnData for this cell class
+        │   │   ├── aggregations/               # Evaluation.save() Aggregation results generated by Evaluation.save()
         │   │   │   ├── {aggr_method_1}.h5ad
         │   │   │   └── ...
-        │   │   └── evaluations/                # Evaluation.save() 生成的评估详情
+        │   │   └── evaluations/                # Evaluation.save() Evaluation details generated by Evaluation.save()
         │   │       ├── {aggr_method}_{metric}.csv
         │   │       └── ...
         │   ├── {cellclass_2}/
         │   │   └── ...
         │   └── ...
-        └── summary/                            # 汇总目录
-            ├── summary_by_cellclass.csv        # 所有 cellclass 的详细指标（有 cellclass 分组时）
-            ├── summary_avg.csv                 # 所有 cellclass 的平均指标（有 cellclass 分组时）
-            ├── summary_metrics_{ckpt_type}.csv # 评估指标摘要（无 cellclass 分组时）
-            └── predictions_{ckpt_type}.h5ad    # 完整预测结果（无 cellclass 分组时）
+        └── summary/                            # Summary directory
+            ├── summary_by_cellclass.csv        # Detailed metrics for all cell classes (when grouped by cell class)
+            ├── summary_avg.csv                 # Average metrics across all cell classes (when grouped by cell class)
+            ├── summary_metrics_{ckpt_type}.csv # Evaluation metric summary (without cell-class grouping)
+            └── predictions_{ckpt_type}.h5ad    # Full prediction results (without cell-class grouping)
         
-        {evaluation_config.save_dir}/           # 配置指定的评估保存目录
-        ├── summary.csv                         # 评估指标摘要副本
-        ├── aggregations/                       # 聚合后的表达数据
+        {evaluation_config.save_dir}/           # Evaluation output directory specified by config
+        ├── summary.csv                         # Copy of evaluation metric summary
+        ├── aggregations/                       # Aggregated expression data
         │   └── ...
-        └── evaluations/                        # 评估详细结果
+        └── evaluations/                        # Detailed evaluation results
             └── ...
         
         Attributes Modified:
-            self.summary_metrics: 更新为最终评估指标 DataFrame
-            self.preds_list: 清空以释放内存
+            self.summary_metrics: Updated to the final evaluation metrics DataFrame
+            self.preds_list: Cleared to release memory
         
         Note:
-            - 此函数依赖 on_test_start() 初始化的 self.preds_list
-            - 依赖 test_step() 在每个批次后填充的预测结果
+            - This function depends on self.preds_list initialized in on_test_start()
+            - It depends on predictions appended by test_step() after each batch
         """
         import torch.distributed as dist
         super().on_test_end()
         
-        # ========== 步骤1：准备工作 ==========
-        # 从类名提取模型名称（用于评估报告标识）
-        # 例如：<class 'perturbench.models.MyModel'> -> "MyModel"
+        # ========== Step1：Preparation ==========
+        # Extract model name from class name (used as evaluation report identifier)
+        # Example: <class 'perturbench.models.MyModel'> -> "MyModel"
         model_name = str(self.__class__).split(".")[-1].replace("'>", "")
         
-        # 收集所有分布式进程的预测结果
-        # gathered_data: List[(np.ndarray, pd.DataFrame)]，每个元素是一个进程的 (表达矩阵, obs DataFrame)
-        # is_distributed: bool，是否处于分布式训练模式
-        # rank: int，当前进程的 rank（0 为主进程）
+        # Collect prediction results from all distributed processes
+        # gathered_data: List[(np.ndarray, pd.DataFrame)]，each element is one process's (expression matrix, obs DataFrame)
+        # is_distributed: bool，whether running in distributed mode
+        # rank: int，current process rank (0 is the main process)
         gathered_data, is_distributed, rank = self._gather_predictions()
         summary_metrics, summary_metrics_dict = None, {}
 
-        # ========== 步骤2：在主进程 (rank 0) 执行评估 ==========
-        # 仅在 rank 0 执行评估，避免重复计算和 I/O 冲突
+        # ========== Step2：Run evaluation on the main process (rank 0) ==========
+        # Run evaluation only on rank 0 to avoid duplicate computation and I/O conflicts
         if rank == 0:
-            # 2.1 构建 AnnData 对象
-            # predicted_adata: 模型预测的表达矩阵 + 对照组数据
-            # reference_adata: 真实扰动数据 + 对照组数据
+            # 2.1 Build AnnData objects
+            # predicted_adata: Model-predicted expression matrix + control-group data
+            # reference_adata: Ground-truth perturbed data + control-group data
             predicted_adata, reference_adata, _ = self._build_anndata(gathered_data)
             
-            # 2.2 获取输出目录（优先从 Hydra 配置获取，否则从 Logger 或配置文件获取）
+            # 2.2 Resolve output directory (prefer Hydra config, otherwise Logger or config file)
             output_dir = self._get_output_dir()
 
-            # 2.3 按 cellclass 分组运行评估（或全量评估，取决于数据配置）
+            # 2.3 Run evaluation by cell class (or globally, depending on data config)
             summary_metrics, summary_metrics_dict, csv_path = self._run_evaluation_per_cellclass(
                 predicted_adata, reference_adata, model_name, output_dir
             )
 
-            # 2.4 打印评估摘要（如果配置允许）
+            # 2.4 Print evaluation summary (if enabled by config)
             if self.evaluation_config.print_summary and summary_metrics is not None:
                 print(f"\n===== Average Summary Metrics =====\n{summary_metrics}\n")
             if csv_path:
                 print(f"Evaluation finished. Results saved to {csv_path}")
 
-            # 2.5 记录到 Weights & Biases（如果启用）
-            # 先记录每个 cellclass 的指标，再记录所有 cellclass 的平均指标
+            # 2.5 Log to Weights & Biases (if enabled)
+            # Log per-cell-class metrics first, then log averages across all cell classes
             if summary_metrics_dict:
-                # 2.5.1 记录每个 cellclass 的独立指标（带 cellclass 前缀）
+                # 2.5.1 Log per-cell-class metrics (prefixed with cell class)
                 for cc, cc_metrics in summary_metrics_dict.items():
                     cc_prefix = str(cc).replace('/', '_')
                     self._log_to_wandb({f"{cc_prefix}/{k}": v for k, v in cc_metrics.items()})
 
-                # 2.5.2 计算并记录所有 cellclass 的平均指标
+                # 2.5.2 Compute and log average metrics across all cell classes
                 avg_dict = {}
                 for cc_metrics in summary_metrics_dict.values():
                     for k, v in cc_metrics.items():
                         avg_dict.setdefault(k, []).append(float(v) if hasattr(v, '__float__') else v)
                 self._log_to_wandb({f"mean/{k}": np.mean(v) for k, v in avg_dict.items()})
 
-        # ========== 步骤3：同步评估结果到所有进程 ==========
-        # 在分布式场景下，确保所有进程都能访问 summary_metrics
-        # 这对于后续可能依赖评估结果的逻辑很重要（如模型选择、早停等）
+        # ========== Step3：Synchronize evaluation results to all processes ==========
+        # In distributed settings, ensure all processes can access summary_metrics
+        # This is important for downstream logic that may depend on evaluation results (e.g., model selection, early stopping)
         if is_distributed:
-            # 使用 broadcast_object_list 从 rank 0 广播 summary_metrics 到所有进程
+            # Use broadcast_object_list to broadcast summary_metrics from rank 0 to all processes
             obj_list = [summary_metrics]
             dist.broadcast_object_list(obj_list, src=0)
             self.summary_metrics = obj_list[0]
             
-            # 同步屏障：确保所有进程都收到广播后再继续
-            # 防止快的进程过早进入下一阶段（如开始新的训练轮次）
+            # Synchronization barrier: ensure all processes receive the broadcast before continuing
+            # Prevent fast processes from entering the next stage too early (e.g., starting a new training epoch)
             dist.barrier()
         else:
-            # 非分布式模式，直接赋值即可
+            # In non-distributed mode, direct assignment is sufficient
             self.summary_metrics = summary_metrics
 
-        # ========== 步骤4：清理资源 ==========
-        # 释放预测列表占用的内存（可能很大，特别是测试集较大时）
+        # ========== Step4：Clean up resources ==========
+        # Release memory used by prediction lists (can be large, especially with large test sets)
         self.preds_list = []
         
-        # 手动触发垃圾回收，确保内存及时释放
-        # 在 GPU 训练场景下尤为重要，避免后续操作因内存不足而失败
+        # Manually trigger garbage collection to release memory promptly
+        # Especially important in GPU training to avoid later failures due to insufficient memory
         gc.collect()
 
     def transfer_batch_to_device(self, batch, device, dataloader_idx):
@@ -1044,7 +1044,7 @@ class PerturbationModel(L.LightningModule, ABC):
                 lambda x: x.to(device)
             )
 
-            # 注意：obs_df 不要递归 to(device)
+            # Note: do not recursively apply to(device) to obs_df
             return Batch(batch_dict), obs_df
 
         return batch

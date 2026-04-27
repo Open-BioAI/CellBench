@@ -38,11 +38,11 @@ class MLP(nn.Module):
 
 
 class PertAggregator(nn.Module):
-    """聚合多个扰动 embedding（如多基因扰动）为单个向量
+    """Aggregate multiple perturbation embeddings (e.g., multi-gene perturbations) into a single vector
     
-    支持两种输入格式：
-    1. Padded tensor: (batch, max_n, dim) + lengths (batch,) - 推荐，适合多进程
-    2. List[List[Tensor]] - 兼容旧代码
+    Supports two input formats:
+    1. Padded tensor: (batch, max_n, dim) + lengths (batch,) - Recommended, suitable for multiprocessing
+    2. List[List[Tensor]] - Compatible with old code
     """
     
     def __init__(
@@ -60,19 +60,19 @@ class PertAggregator(nn.Module):
     def forward(self, pert_data, lengths=None) -> torch.Tensor:
         """
         Args:
-            pert_data: Tensor (batch, max_n, dim) 或 List[List[Tensor]]
-            lengths: Tensor (batch,) - 仅当 pert_data 是 padded tensor 时需要
+            pert_data: Tensor (batch, max_n, dim) or List[List[Tensor]]
+            lengths: Tensor (batch,) - Only needed when pert_data is a padded tensor
         Returns:
-            聚合后的 embedding (batch_size, output_dim)
+            Aggregated embedding (batch_size, output_dim)
         """
-        # 判断输入格式
+        # Determine input format
         if isinstance(pert_data, torch.Tensor):
             return self._forward_padded(pert_data, lengths)
         else:
             return self._forward_list(pert_data)
     
     def _forward_padded(self, pert_tensor, lengths):
-        """处理 padded tensor 格式（快速路径）"""
+        """Process padded tensor format (fast path)"""
         # pert_tensor: (batch, max_n, dim)
         # lengths: (batch,)
         batch_size, max_n, dim = pert_tensor.shape
@@ -81,11 +81,11 @@ class PertAggregator(nn.Module):
         if lengths is None or lengths.sum() == 0:
             return torch.zeros(batch_size, self.output_dim, device=device)
         
-        # 创建 mask: (batch, max_n)
+        # Create mask: (batch, max_n)
         idx = torch.arange(max_n, device=device).unsqueeze(0)  # (1, max_n)
         mask = idx < lengths.unsqueeze(1)  # (batch, max_n)
         
-        # 展平有效的 embedding（使用 reshape 替代 view 避免内存不连续问题）
+        # Flatten valid embeddings (use reshape instead of view to avoid memory discontinuity issues)
         flat_emb = pert_tensor.reshape(-1, dim)  # (batch * max_n, dim)
         flat_mask = mask.reshape(-1)  # (batch * max_n,)
         valid_emb = flat_emb[flat_mask]  # (total_valid, dim)
@@ -93,14 +93,14 @@ class PertAggregator(nn.Module):
         if valid_emb.shape[0] == 0:
             return torch.zeros(batch_size, self.output_dim, device=device)
         
-        # MLP 处理
+        # MLP processing
         valid_emb = self.mlp(valid_emb)  # (total_valid, output_dim)
         
-        # 构建 batch 索引用于 scatter_add（使用 reshape）
+        # Build batch indices for scatter_add (using reshape)
         batch_idx = torch.arange(batch_size, device=device).unsqueeze(1).expand(-1, max_n)  # (batch, max_n)
         valid_batch_idx = batch_idx.reshape(-1)[flat_mask]  # (total_valid,)
         
-        # scatter_add 聚合
+        # scatter_add aggregation
         agged = torch.zeros(batch_size, self.output_dim, device=device)
         idx_expanded = valid_batch_idx.unsqueeze(1).expand(-1, self.output_dim)
         agged.scatter_add_(0, idx_expanded, valid_emb)
@@ -108,7 +108,7 @@ class PertAggregator(nn.Module):
         return agged
     
     def _forward_list(self, pert_batch):
-        """处理 List[List[Tensor]] 格式（兼容旧代码）"""
+        """Process List[List[Tensor]] format (compatible with old code)"""
         batch_size = len(pert_batch)
         device = next(self.mlp.parameters()).device
         
@@ -139,7 +139,7 @@ class PertAggregator(nn.Module):
 
 
 class MixedPerturbationEncoder(nn.Module):
-    """混合扰动编码器：支持基因、药物、环境、CRISPR 多模态扰动"""
+    """Mixed perturbation encoder: supports gene, drug, environment, CRISPR multi-modal perturbations"""
 
     def __init__(
             self,
@@ -164,7 +164,7 @@ class MixedPerturbationEncoder(nn.Module):
         self.final_embed_dim = final_embed_dim
 
         self.fusion_mlp = MLP(self.per_modality_embed_dim, final_embed_dim)
-        # 条件创建编码器
+        # Conditionally create encoders
         self.gene_encoder = PertAggregator(gene_pert_dim, self.per_modality_embed_dim, hidden_dims, dropout=dropout)\
              if gene_pert_dim > 1 else None
         self.drug_encoder = PertAggregator(drug_pert_dim, self.per_modality_embed_dim, hidden_dims, dropout=dropout)\
@@ -174,7 +174,7 @@ class MixedPerturbationEncoder(nn.Module):
         self.crispr_encoder = MLP(crispr_pert_dim, self.per_modality_embed_dim, hidden_dims, dropout=dropout)\
              if crispr_pert_dim > 1 else None
 
-        # 缓存编码器存在性（避免 forward 中反复检查）
+        # Cache encoder existence (avoid repeated checks in forward)
         self._has_gene = self.gene_encoder is not None
         self._has_drug = self.drug_encoder is not None
         self._has_env = self.env_encoder is not None
@@ -182,9 +182,9 @@ class MixedPerturbationEncoder(nn.Module):
 
     def forward(self, batch) -> torch.Tensor:
         """
-        支持两种输入格式：
+        Supports two input formats:
         1. Padded tensor: batch.gene_pert (B, max_n, dim) + batch.gene_pert_len (B,)
-        2. List 格式: batch.gene_pert = List[List[Tensor]]（兼容旧代码）
+        2. List format: batch.gene_pert = List[List[Tensor]] (compatible with old code)
         """
         # gene embedding
         if self._has_gene and hasattr(batch, 'gene_pert'):
@@ -200,7 +200,7 @@ class MixedPerturbationEncoder(nn.Module):
         else:
             drug_pert_emb = 0
         
-        # env/crispr（单值，不需要聚合）
+        # env/crispr (single value, no aggregation needed)
         env_pert_emb = self.env_encoder(batch.env_pert) if self._has_env and hasattr(batch, 'env_pert') else 0
         crispr_pert_emb = self.crispr_encoder(batch.crispr_pert) if self._has_crispr and hasattr(batch, 'crispr_pert') else 0
 
