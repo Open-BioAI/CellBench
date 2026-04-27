@@ -1,16 +1,16 @@
 # VCBench
 
-VCBench 是一个用于单细胞扰动效应预测与公平评测的统一框架，支持多数据集、多模型训练，以及基于 Hydra + Weights & Biases（W&B）的可复现实验流程。
+VCBench is a unified framework for single-cell perturbation effect prediction and fair benchmarking. It supports multi-dataset, multi-model training workflows with reproducible experiment management based on Hydra + Weights & Biases (W&B).
 
-Paper Demo 网站：<https://maoxinjie.github.io/VCBench-demo/>
+Paper demo site: <https://maoxinjie.github.io/VCBench-demo/>
 
 ## Acknowledgement
 
-该框架整体实现与组织方式 follow [PerturBench](https://github.com/altoslabs/perturbench)。
+The overall implementation and project organization are built on top of [PerturBench](https://github.com/altoslabs/perturbench).
 
 ## Citation
 
-如果你在研究中使用了 VCBench 或参考了其框架设计，请同时引用 PerturBench：
+If you use VCBench in your research, or build upon its framework design, please also cite PerturBench:
 
 ```bibtex
 @article{wu2025perturbench,
@@ -23,9 +23,9 @@ Paper Demo 网站：<https://maoxinjie.github.io/VCBench-demo/>
 
 ---
 
-## 1. 环境安装
+## 1. Environment Setup
 
-在项目根目录执行：
+Run the following commands in the project root:
 
 ```bash
 conda env create -f ./vcbench.yml
@@ -33,7 +33,7 @@ conda activate vcbench
 pip install -e .
 ```
 
-配置 W&B：
+Configure W&B:
 
 ```bash
 wandb login
@@ -41,84 +41,84 @@ wandb login
 
 ---
 
-## 2. 项目结构（核心）
+## 2. Core Project Structure
 
 ```text
 VCBench/
 ├── src/perturbench/
-│   ├── configs/                 # Hydra 配置
-│   │   └── model/               # 各模型配置文件
+│   ├── configs/                 # Hydra configs
+│   │   └── model/               # Per-model config files
 │   ├── modelcore/
-│   │   ├── models/              # 模型实现与注册
-│   │   └── train.py             # 训练入口（支持 Hydra + CLI override）
-│   └── data/                    # 数据与数据集构建逻辑
-├── sweep/                       # W&B Sweep 配置
-├── NEW_MODEL_INTEGRATION.md     # 新模型接入详细教程
-└── RUN_TUTORIAL.md              # 复现实验运行教程
+│   │   ├── models/              # Model implementations and registration
+│   │   └── train.py             # Training entrypoint (Hydra + CLI overrides)
+│   └── data/                    # Data and dataset construction logic
+├── sweep/                       # W&B sweep configs
+├── NEW_MODEL_INTEGRATION.md     # Detailed guide for integrating new models
+└── RUN_TUTORIAL.md              # Reproducible experiment running tutorial
 ```
 
 ---
 
-## 3. 数据准备与路径配置
+## 3. Data Preparation and Path Configuration
 
-### 3.1 下载数据
+### 3.1 Download Data
 
-从 Google Drive 下载并放到项目根目录：
+Download the following folders from Google Drive and place them in the project root:
 
 - `unseen_perts`
 - `model_related`
 
-下载地址：<https://drive.google.com/drive/folders/1GrPW9x5_npnT7ILwDVsFWvfDIcqaSjdk?usp=sharing>
+Download link: <https://drive.google.com/drive/folders/1GrPW9x5_npnT7ILwDVsFWvfDIcqaSjdk?usp=sharing>
 
-### 3.2 设置数据文件路径（sweep 配置）
+### 3.2 Set Data File Paths (Sweep Configs)
 
-- `./sweep/norman/*.yaml` 中 `parameters.data.data_path` 设置为：
+- In `./sweep/norman/*.yaml`, set `parameters.data.data_path` to:
 
 ```yaml
 ./unseen_perts/norman2019_comb_stack.h5ad
 ```
 
-- `./sweep/replogle/*.yaml` 中 `parameters.data.data_path` 设置为：
+- In `./sweep/replogle/*.yaml`, set `parameters.data.data_path` to:
 
 ```yaml
 ./unseen_perts/ReplogleWeissman2022_K562_stack_hvg_split.h5ad
 ```
 
-- `./sweep/sciplex/*.yaml` 中 `parameters.data.data_path` 设置为：
+- In `./sweep/sciplex/*.yaml`, set `parameters.data.data_path` to:
 
 ```yaml
 ./unseen_perts/SrivatsanTrapnell2020_sciplex3_stack_hvg_split.h5ad
 ```
 
-### 3.3 设置特征映射路径
+### 3.3 Set Feature Mapping Paths
 
-- Norman / Replogle：`parameters.data.transform.gene_map_path`
+- Norman / Replogle: `parameters.data.transform.gene_map_path`
 
 ```yaml
 ./model_related/ESM2_pert_features.pt
 ```
 
-- Sciplex：`parameters.data.transform.drug_map_path`
+- Sciplex: `parameters.data.transform.drug_map_path`
 
 ```yaml
 ./model_related/SMILES_pert_features.pt
 ```
 
-### 3.4 GEARS 额外配置
+### 3.4 Additional GEARS Configuration
 
-- `./sweep/norman/no-stack/gears.yaml` 中 `parameters.model.data_path`：
+- In `./sweep/norman/no-stack/gears.yaml`, set `parameters.model.data_path`:
 
 ```yaml
 ./gears_norman
 ```
 
-- `./sweep/replogle/no-stack/gears.yaml` 中 `parameters.model.data_path`：
+- In `./sweep/replogle/no-stack/gears.yaml`, set `parameters.model.data_path`:
 
 ```yaml
 ./gears_replogle
 ```
 
-- `./src/perturbench/configs/model/gears.yaml` 中：
+- In `./src/perturbench/configs/model/gears.yaml`, set:
 
 ```yaml
 gene2go_path: ./model_related/gene2go.pkl
@@ -127,28 +127,28 @@ gene_set_path: ./model_related/essential_all_data_pert_genes.pkl
 
 ---
 
-## 4. 运行实验
+## 4. Run Experiments
 
-### 4.1 使用 train.py（Hydra）
+### 4.1 Use `train.py` (Hydra)
 
 ```bash
 python src/perturbench/modelcore/train.py model=latent_additive train=true test=true
 ```
 
-快速检查配置（不训练）：
+Quick config check (no training):
 
 ```bash
 python src/perturbench/modelcore/train.py model=latent_additive train=false test=false
 ```
 
-### 4.2 使用 W&B Sweep
+### 4.2 Use W&B Sweep
 
 ```bash
 wandb sweep [yaml_path]
 wandb agent [entity/project/sweep_id]
 ```
 
-可先做单次试跑：
+You can start with a single trial run:
 
 ```bash
 wandb agent --count 1 [entity/project/sweep_id]
@@ -156,32 +156,32 @@ wandb agent --count 1 [entity/project/sweep_id]
 
 ---
 
-## 5. 新模型接入（最小可用流程）
+## 5. Integrating a New Model (Minimal Viable Flow)
 
-目标：让模型可被 `train.py` 和 `wandb sweep` 正常调用，并贯通训练/验证/测试。
+Goal: make your model callable by both `train.py` and `wandb sweep`, with end-to-end train/validation/test support.
 
-### 步骤 1：新增模型代码
+### Step 1: Add Model Code
 
-在 `src/perturbench/modelcore/models/<your_model>.py` 新建模型，推荐继承 `PerturbationModel` 并实现：
+Create `src/perturbench/modelcore/models/<your_model>.py`. It is recommended to inherit from `PerturbationModel` and implement:
 
 - `forward(...)`
 - `training_step(...)`
 - `validation_step(...)`
 - `predict(...)`
 
-建议复用基类能力：
+Recommended base-class utilities to reuse:
 
-- `auto_mse(...)`（损失）
-- `_get_mask(batch)`（mask 逻辑）
+- `auto_mse(...)` (loss)
+- `_get_mask(batch)` (mask logic)
 
-参考实现：
+Reference implementations:
 
 - `src/perturbench/modelcore/models/linear_additive.py`
 - `src/perturbench/modelcore/models/latent_additive.py`
 
-### 步骤 2：新增模型配置
+### Step 2: Add Model Config
 
-在 `src/perturbench/configs/model/<your_model>.yaml` 新建配置，示例：
+Create `src/perturbench/configs/model/<your_model>.yaml`, for example:
 
 ```yaml
 _target_: perturbench.modelcore.models.YourModel
@@ -193,70 +193,70 @@ wd: 1e-6
 lr_scheduler_mode: onecycle
 ```
 
-注意：
+Notes:
 
-- `_target_` 必须指向正确的 Python 类
-- YAML 参数名需与 `__init__` 对齐
+- `_target_` must point to the correct Python class.
+- YAML argument names should match your `__init__` signature.
 
-### 步骤 3：注册模型
+### Step 3: Register the Model
 
-在 `src/perturbench/modelcore/models/__init__.py` 添加：
+Add the import in `src/perturbench/modelcore/models/__init__.py`:
 
 ```python
 from .your_model import YourModel
 ```
 
-### 步骤 4：如需 sweep 注入新参数，更新 train.py 参数映射
+### Step 4: Update `train.py` Mapping for New Sweep Arguments
 
-当前 `train.py` 使用“argparse + Hydra override”混合机制。若新增例如 `model.foo`：
+`train.py` currently uses a hybrid mechanism (`argparse + Hydra overrides`). If you add a new argument like `model.foo`:
 
-1. 在 `_build_arg_parser()` 增加：
+1. Add it in `_build_arg_parser()`:
 
 ```text
 --model.foo
 ```
 
-2. 在 `_apply_cli_overrides()` 的 `mapping` 增加：
+2. Add mapping in `_apply_cli_overrides()`:
 
 ```text
 "model_foo": "model.foo"
 ```
 
-否则 sweep 参数可能无法生效。
+Otherwise, sweep arguments may not be applied correctly.
 
-### 步骤 5：最小验证顺序
+### Step 5: Minimal Validation Sequence
 
 ```bash
-# 1) 仅检查配置
+# 1) Config check only
 python src/perturbench/modelcore/train.py model=<your_model> train=false test=false
 
-# 2) 1 个 epoch
+# 2) One epoch
 python src/perturbench/modelcore/train.py model=<your_model> trainer.max_epochs=1 train=true test=false
 
-# 3) 训练 + 测试
+# 3) Train + test
 python src/perturbench/modelcore/train.py model=<your_model> train=true test=true
 ```
 
 ---
 
-## 6. 常见问题排查
+## 6. Common Troubleshooting
 
-- `_target_` 找不到类：检查 YAML 路径、类名、`models/__init__.py` 注册
-- 训练时报 batch 字段缺失：对齐现有 batch 协议（如 `pert_cell_counts`、`control_cell_counts`）
-- sweep 参数不生效：确认 `train.py` 的 parser 和 mapping 已覆盖新参数
-- 协变量维度不匹配：检查 `use_covs` 与 transform 设置是否一致
-
----
-
-## 7. 推荐实践
-
-- 新模型先做“最小可跑版本”，再逐步叠加复杂模块
-- 尽量复用基类提供的 mask、scheduler、logging，降低重复代码
-- 每新增一个 sweep 参数，同步更新 `train.py` 参数映射，避免线上空跑
+- `_target_` class not found: check YAML path, class name, and registration in `models/__init__.py`.
+- Missing batch fields during training: align with the existing batch protocol (for example, `pert_cell_counts` and `control_cell_counts`).
+- Sweep arguments not taking effect: verify parser and mapping in `train.py` include your new arguments.
+- Covariate dimension mismatch: check consistency between `use_covs` and transform settings.
 
 ---
 
-## 8. 相关文档
+## 7. Recommended Practices
 
-- `NEW_MODEL_INTEGRATION.md`：新模型接入完整说明
-- `RUN_TUTORIAL.md`：数据准备与实验运行说明
+- Start with a minimally runnable model, then add complex modules incrementally.
+- Reuse base-class mask, scheduler, and logging utilities whenever possible to reduce duplicated code.
+- Each time you add a sweep argument, update the `train.py` mapping to avoid no-op runs.
+
+---
+
+## 8. Related Documents
+
+- `NEW_MODEL_INTEGRATION.md`: full guide for integrating new models.
+- `RUN_TUTORIAL.md`: data preparation and experiment running guide.
