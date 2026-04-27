@@ -4,6 +4,23 @@ VCBench 是一个用于单细胞扰动效应预测与公平评测的统一框架
 
 Paper Demo 网站：<https://maoxinjie.github.io/VCBench-demo/>
 
+## Acknowledgement
+
+该框架整体实现与组织方式 follow [PerturBench](https://github.com/altoslabs/perturbench)。
+
+## Citation
+
+如果你在研究中使用了 VCBench 或参考了其框架设计，请同时引用 PerturBench：
+
+```bibtex
+@article{wu2025perturbench,
+  title={Perturbench: Benchmarking machine learning models for cellular perturbation analysis},
+  author={Wu, Yan and Wershof, Esther and Schmon, Sebastian M and Nassar, Marcel and Osi{\'n}ski, B{\l}a{\.z}ej and Eksi, Ridvan and Yan, Zichao and Stark, Rory and Zhang, Kun and Graepel, Thore},
+  journal={arXiv preprint arXiv:2408.10609},
+  year={2024}
+}
+```
+
 ---
 
 ## 1. 环境安装
